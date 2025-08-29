@@ -19,7 +19,7 @@ readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m' # No Color
 
 # 脚本版本
-readonly SCRIPT_VERSION="4.0.1"
+readonly SCRIPT_VERSION="4.1.1"
 
 # 脚本启动时的目录
 readonly SCRIPT_START_DIR="$(pwd)"
@@ -1937,8 +1937,6 @@ services:
       - ./data:/data
       - ./conf/redis.conf:/etc/redis/redis.conf
       - ./logs:/var/log/redis
-    labels:
-      createdBy: "Docker管理脚本"
 
 networks:
   app-network:
@@ -2081,8 +2079,6 @@ services:
       - ./conf/my.cnf:/etc/mysql/conf.d/my.cnf
       - ./logs:/var/log/mysql
       ${mysql_database:+- ./init:/docker-entrypoint-initdb.d}
-    labels:
-      createdBy: "Docker管理脚本"
 
 networks:
   app-network:
@@ -2198,8 +2194,6 @@ services:
     volumes:
       - ./data:/var/lib/postgresql/data
       ${postgres_database:+- ./init:/docker-entrypoint-initdb.d}
-    labels:
-      createdBy: "Docker管理脚本"
 
 networks:
   app-network:
@@ -2352,8 +2346,6 @@ services:
       - ./html:/usr/share/nginx/html
       - ./logs:/var/log/nginx
       - ./certs:/etc/nginx/certs
-    labels:
-      createdBy: "Docker管理脚本"
 
 networks:
   app-network:
