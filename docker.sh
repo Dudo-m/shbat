@@ -2,7 +2,7 @@
 
 # Docker管理脚本 - 优化版
 # 作者: Docker管理助手
-# 版本: 2.0
+# 版本: ${SCRIPT_VERSION}
 # 描述: 一键式Docker环境管理工具，支持安装、配置、镜像管理等功能
 
 set -euo pipefail  # 严格模式：遇到错误立即退出
@@ -16,6 +16,9 @@ readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
 readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m' # No Color
+
+# 脚本版本
+readonly SCRIPT_VERSION="2.1.0"
 
 # Docker Compose稳定版本（当GitHub API不可用时的备用版本）
 readonly COMPOSE_FALLBACK_VERSION="v2.24.6"
@@ -118,21 +121,43 @@ change_apt_source() {
     cp /etc/apt/sources.list "$backup_file"
     log_info "已备份原sources.list到: $backup_file"
 
-    # 获取系统代号
-    local codename
-    codename=$(lsb_release -cs 2>/dev/null) || codename="focal"
+    # 获取操作系统ID和代号
+    local os_id codename
+    if [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        os_id="$ID"
+        codename="$VERSION_CODENAME"
+    else
+        log_error "无法读取 /etc/os-release，无法确定发行版"
+        return 1
+    fi
 
-    # 写入阿里云镜像源
-    cat > /etc/apt/sources.list <<EOF
+    log_info "检测到发行版: $os_id, 代号: $codename"
+
+    # 根据不同发行版写入不同的镜像源
+    if [[ "$os_id" == "ubuntu" ]]; then
+        log_info "配置Ubuntu镜像源..."
+        cat > /etc/apt/sources.list <<EOF
 # 阿里云Ubuntu镜像源 - 自动生成于$(date)
 deb https://mirrors.aliyun.com/ubuntu/ $codename main restricted universe multiverse
 deb https://mirrors.aliyun.com/ubuntu/ $codename-updates main restricted universe multiverse
 deb https://mirrors.aliyun.com/ubuntu/ $codename-backports main restricted universe multiverse
 deb https://mirrors.aliyun.com/ubuntu/ $codename-security main restricted universe multiverse
-
-# 源码包（可选）
-# deb-src https://mirrors.aliyun.com/ubuntu/ $codename main restricted universe multiverse
 EOF
+    elif [[ "$os_id" == "debian" ]]; then
+        log_info "配置Debian镜像源..."
+        cat > /etc/apt/sources.list <<EOF
+# 阿里云Debian镜像源 - 自动生成于$(date)
+deb https://mirrors.aliyun.com/debian/ $codename main contrib non-free non-free-firmware
+deb https://mirrors.aliyun.com/debian/ $codename-updates main contrib non-free non-free-firmware
+deb https://mirrors.aliyun.com/debian/ $codename-backports main contrib non-free non-free-firmware
+deb https://mirrors.aliyun.com/debian-security/ $codename-security main contrib non-free non-free-firmware
+EOF
+    else
+        log_error "不支持的基于apt的发行版: $os_id"
+        mv "$backup_file" /etc/apt/sources.list # 恢复备份
+        return 1
+    fi
 
     log_info "更新软件包列表..."
     if apt-get update; then
@@ -140,6 +165,7 @@ EOF
     else
         log_error "apt源更新失败，恢复原配置"
         mv "$backup_file" /etc/apt/sources.list
+        apt-get update # 尝试用旧配置刷新
         return 1
     fi
 }
@@ -212,24 +238,44 @@ EOF
 install_dependencies() {
     log_purple "安装系统依赖包..."
 
-    if command_exists apt-get; then
+    if command_exists apt-get;
+        then
         apt-get update
-        apt-get install -y \
-            apt-transport-https \
-            ca-certificates \
-            curl \
-            gnupg \
-            lsb-release \
-            software-properties-common \
-            wget
-    elif command_exists yum; then
+        
+        local os_id
+        os_id=$(detect_os)
+        
+        # 定义基础依赖包
+        local packages_to_install=(
+            "apt-transport-https"
+            "ca-certificates"
+            "curl"
+            "gnupg"
+            "lsb-release"
+            "wget"
+        )
+        
+        # software-properties-common 主要用于Ubuntu管理PPA，Debian通常不需要
+        if [[ "$os_id" == "ubuntu" ]]; then
+            packages_to_install+=("software-properties-common")
+        fi
+        
+        log_info "将为 $os_id 安装以下依赖: ${packages_to_install[*]}"
+        if ! apt-get install -y "${packages_to_install[@]}"; then
+            log_error "依赖包安装失败"
+            return 1
+        fi
+
+    elif command_exists yum;
+        then
         yum install -y \
             yum-utils \
             device-mapper-persistent-data \
             lvm2 \
             curl \
             wget
-    elif command_exists dnf; then
+    elif command_exists dnf;
+        then
         dnf install -y \
             dnf-utils \
             device-mapper-persistent-data \
@@ -242,9 +288,10 @@ install_dependencies() {
     fi
 }
 
-# Docker官方源安装
+
+# Docker安装（合并国内外源）
 install_docker() {
-    log_purple "开始安装Docker（官方源）..."
+    log_purple "开始安装Docker..."
 
     if command_exists docker; then
         log_warn "Docker已安装，版本信息："
@@ -252,6 +299,30 @@ install_docker() {
         return 0
     fi
 
+    # 询问用户选择源
+    local source_choice
+    echo
+    log_info "请选择Docker安装源："
+    log_info "  1) 官方源（默认）"
+    log_info "  2) 国内源（推荐国内用户选择）"
+    echo
+    read -rp "请输入选择 (1/2，默认为1): " source_choice
+    echo
+
+    case "${source_choice:-1}" in
+        2)
+            log_info "使用国内源安装Docker..."
+            install_docker_cn_impl
+            ;;
+        *)
+            log_info "使用官方源安装Docker..."
+            install_docker_official_impl
+            ;;
+    esac
+}
+
+# Docker官方源安装实现
+install_docker_official_impl() {
     check_network
     install_dependencies
 
@@ -298,16 +369,8 @@ install_docker() {
     docker --version
 }
 
-# Docker国内源安装
-install_docker_cn() {
-    log_purple "开始安装Docker（国内源）..."
-
-    if command_exists docker; then
-        log_warn "Docker已安装，版本信息："
-        docker --version
-        return 0
-    fi
-
+# Docker国内源安装实现
+install_docker_cn_impl() {
     check_network
     install_dependencies
 
@@ -376,9 +439,9 @@ get_latest_compose_version() {
     echo "$version"
 }
 
-# Docker Compose官方安装
+# Docker Compose安装（合并国内外源）
 install_docker_compose() {
-    log_purple "开始安装Docker Compose（官方源）..."
+    log_purple "开始安装Docker Compose..."
 
     if command_exists docker-compose; then
         log_warn "Docker Compose已安装，版本信息："
@@ -386,6 +449,30 @@ install_docker_compose() {
         return 0
     fi
 
+    # 询问用户选择源
+    local source_choice
+    echo
+    log_info "请选择Docker Compose安装源："
+    log_info "  1) 官方源（默认）"
+    log_info "  2) 国内源（推荐国内用户选择）"
+    echo
+    read -rp "请输入选择 (1/2，默认为1): " source_choice
+    echo
+
+    case "${source_choice:-1}" in
+        2)
+            log_info "使用国内源安装Docker Compose..."
+            install_docker_compose_cn_impl
+            ;;
+        *)
+            log_info "使用官方源安装Docker Compose..."
+            install_docker_compose_official_impl
+            ;;
+    esac
+}
+
+# Docker Compose官方源安装实现
+install_docker_compose_official_impl() {
     check_network
 
     local version
@@ -419,16 +506,8 @@ install_docker_compose() {
     fi
 }
 
-# Docker Compose国内源安装（重写版本）
-install_docker_compose_cn() {
-    log_purple "开始安装Docker Compose（国内优化版）..."
-
-    if command_exists docker-compose; then
-        log_warn "Docker Compose已安装，版本信息："
-        docker-compose --version
-        return 0
-    fi
-
+# Docker Compose国内源安装实现
+install_docker_compose_cn_impl() {
     check_network
 
     # 方法1：通过包管理器安装（推荐，稳定性最好）
@@ -833,71 +912,6 @@ EOF
 
     chmod +x "$import_script"
     log_info "已创建导入脚本: $import_script"
-}
-
-# 导出所有本地镜像
-export_all_images() {
-    log_purple "导出所有本地镜像..."
-
-    if ! command_exists docker; then
-        log_error "Docker未安装或未运行"
-        return 1
-    fi
-
-    local images
-    images=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -v "<none>")
-
-    if [[ -z "$images" ]]; then
-        log_warn "没有可导出的镜像"
-        return 0
-    fi
-
-    local total
-    total=$(echo "$images" | wc -l)
-    log_info "发现 $total 个本地镜像"
-
-    local export_dir="./docker_images_all_$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "$export_dir"
-    log_info "镜像将导出到: $export_dir"
-
-    # 创建导入脚本
-    create_import_script "$export_dir"
-
-    local current=0
-    local success_count=0
-    local fail_count=0
-
-    while IFS= read -r image; do
-        current=$((current + 1))
-        local safe_name
-        safe_name=$(echo "$image" | sed 's|[/:@]|_|g')
-        local tar_file="$export_dir/${safe_name}.tar"
-
-        log_info "[$current/$total] 正在导出: $image"
-
-        if docker save -o "$tar_file" "$image"; then
-            log_info "✓ 导出成功: $(basename "$tar_file")"
-            success_count=$((success_count + 1))
-        else
-            log_error "✗ 导出失败: $image"
-            fail_count=$((fail_count + 1))
-            rm -f "$tar_file"  # 删除失败的文件
-        fi
-    done <<< "$images"
-
-    echo
-    log_info "=== 导出完成统计 ==="
-    log_info "总镜像数: $total"
-    log_info "成功: $success_count"
-    [[ $fail_count -gt 0 ]] && log_warn "失败: $fail_count"
-
-    if [[ $success_count -gt 0 ]]; then
-        local export_size
-        export_size=$(du -sh "$export_dir" | cut -f1)
-        log_info "导出目录大小: $export_size"
-        log_info "要导入这些镜像，请将目录拷贝到目标机器并运行:"
-        log_info "cd $(basename "$export_dir") && ./import_images.sh"
-    fi
 }
 
 # 交互式选择镜像导出
@@ -1352,34 +1366,31 @@ show_menu() {
     clear
     echo
     log_blue "╔══════════════════════════════════════════════════════════╗"
-    log_blue "║                    Docker 管理脚本 v2.0                    ║"
+    log_blue "║                    Docker 管理脚本 v${SCRIPT_VERSION}                    ║"
     log_blue "╠══════════════════════════════════════════════════════════╣"
     echo "║  📋 Docker 状态管理                                          ║"
     echo "║    1. 查看 Docker 详细状态                                   ║"
     echo "║                                                              ║"
     echo "║  📦 容器管理                                                  ║"
-    echo "║    2. 停止所有运行中的容器                                   ║"
-    echo "║    3. 删除所有容器                                           ║"
-    echo "║    4. 启动所有已停止的容器                                   ║"
+    echo "║    2. 启动所有已停止的容器                                   ║"
+    echo "║    3. 停止所有运行中的容器                                   ║"
+    echo "║    4. 删除所有容器                                           ║"
     echo "║                                                              ║"
     echo "║  🏗️  镜像管理                                                  ║"
-    echo "║    5. 导出所有本地镜像                                       ║"
-    echo "║    6. 交互式选择导出镜像                                     ║"
-    echo "║    7. 从目录导入镜像                                         ║"
+    echo "║    5. 选择导出镜像                                          ║"
+    echo "║    6. 从目录导入镜像                                         ║"
     echo "║                                                              ║"
     echo "║  🛠️  系统管理                                                  ║"
-    echo "║    8. 清理 Docker 系统                                       ║"
-    echo "║    9. 配置 Docker 镜像加速器                                 ║"
+    echo "║    7. 清理 Docker 系统                                       ║"
+    echo "║    8. 配置 Docker 镜像加速器                                 ║"
     echo "║                                                              ║"
     echo "║  ⚙️  安装配置                                                  ║"
-    echo "║   10. 一键安装 Docker (官方源)                               ║"
-    echo "║   11. 一键安装 Docker (国内源)                               ║"
-    echo "║   12. 安装 Docker Compose (官方源)                           ║"
-    echo "║   13. 安装 Docker Compose (国内源)                           ║"
-    echo "║   14. 系统软件源换为国内源                                   ║"
+    echo "║    9. 换国内源(apt/yum/dnf)                                 ║"
+    echo "║   10. 一键安装 Docker                                        ║"
+    echo "║   11. 安装 Docker Compose                                    ║"
     echo "║                                                              ║"
     echo "║  🗑️  卸载                                                      ║"
-    echo "║   15. 完全卸载 Docker                                        ║"
+    echo "║   12. 完全卸载 Docker                                        ║"
     echo "║                                                              ║"
     echo "║    0. 退出脚本                                               ║"
     log_blue "╚══════════════════════════════════════════════════════════╝"
@@ -1389,7 +1400,7 @@ show_menu() {
 # 主程序入口
 main() {
     # 显示脚本信息
-    log_info "Docker管理脚本 v2.0 启动"
+    log_info "Docker管理脚本 v${SCRIPT_VERSION} 启动"
     log_info "当前用户: $(whoami)"
     log_info "系统信息: $(uname -sr)"
 
@@ -1397,40 +1408,22 @@ main() {
         show_menu
 
         local choice
-        read -rp "请选择操作 [0-15]: " choice
+        read -rp "请选择操作 [0-12]: " choice
 
         echo
         case $choice in
             1) show_docker_status ;;
-            2) stop_all_containers ;;
-            3) remove_all_containers ;;
-            4) start_all_containers ;;
-            5) export_all_images ;;
-            6) export_selected_images ;;
-            7) import_images_from_dir ;;
-            8) clean_docker_system ;;
-            9)
+            2) start_all_containers ;;
+            3) stop_all_containers ;;
+            4) remove_all_containers ;;
+            5) export_selected_images ;;
+            6) import_images_from_dir ;;
+            7) clean_docker_system ;;
+            8)
                 check_root
                 change_docker_mirror
                 ;;
-            10)
-                check_root
-                install_docker
-                ;;
-            11)
-                check_root
-                install_docker_cn
-                ;;
-            12)
-
-                check_root
-                install_docker_compose
-                ;;
-            13)
-                check_root
-                install_docker_compose_cn
-                ;;
-            14)
+            9)
                 check_root
                 local os_type
                 os_type=$(detect_os)
@@ -1450,7 +1443,15 @@ main() {
                     log_error "无法检测操作系统类型"
                 fi
                 ;;
-            15)
+            10)
+                check_root
+                install_docker
+                ;;
+            11)
+                check_root
+                install_docker_compose
+                ;;
+            12)
                 check_root
                 uninstall_docker
                 ;;
@@ -1459,7 +1460,7 @@ main() {
                 exit 0
                 ;;
             *)
-                log_error "无效选择，请输入 0-15 之间的数字"
+                log_error "无效选择，请输入 0-12 之间的数字"
                 ;;
         esac
 
