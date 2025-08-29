@@ -5,7 +5,8 @@
 # 版本: ${SCRIPT_VERSION}
 # 描述: 一键式Docker环境管理工具，支持安装、配置、镜像管理等功能
 
-set -euo pipefail  # 严格模式：遇到错误立即退出
+#set -euo pipefail  # 严格模式：遇到错误立即退出
+set -uo pipefail
 
 # ==================== 全局变量和配置 ====================
 
@@ -18,7 +19,7 @@ readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m' # No Color
 
 # 脚本版本
-readonly SCRIPT_VERSION="3.0.1"
+readonly SCRIPT_VERSION="3.0.2"
 
 # Docker Compose稳定版本（当GitHub API不可用时的备用版本）
 readonly COMPOSE_FALLBACK_VERSION="v2.24.6"
