@@ -18,7 +18,7 @@ readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m' # No Color
 
 # 脚本版本
-readonly SCRIPT_VERSION="2.1.0"
+readonly SCRIPT_VERSION="3.0.1"
 
 # Docker Compose稳定版本（当GitHub API不可用时的备用版本）
 readonly COMPOSE_FALLBACK_VERSION="v2.24.6"
@@ -724,7 +724,7 @@ EOF
 # ==================== 容器管理相关函数 ====================
 
 # 交互式选择并停止运行中的容器
-stop_all_containers() {
+stop_selected_containers() {
     log_purple "交互式选择停止运行中的容器..."
 
     if ! command_exists docker; then
@@ -846,7 +846,7 @@ stop_all_containers() {
 }
 
 # 交互式选择并删除容器
-remove_all_containers() {
+remove_selected_containers() {
     log_purple "交互式选择删除容器..."
 
     if ! command_exists docker; then
@@ -973,7 +973,7 @@ remove_all_containers() {
 }
 
 # 交互式选择并启动已停止的容器
-start_all_containers() {
+start_selected_containers() {
     log_purple "交互式选择启动已停止的容器..."
 
     if ! command_exists docker; then
@@ -1759,9 +1759,9 @@ main() {
         case $choice in
             1) show_docker_status ;;
             2) view_container_logs ;;
-            3) start_all_containers ;;
-            4) stop_all_containers ;;
-            5) remove_all_containers ;;
+            3) start_selected_containers ;;
+            4) stop_selected_containers ;;
+            5) remove_selected_containers ;;
             6) export_selected_images ;;
             7) import_images_from_dir ;;
             8) clean_docker_system ;;
