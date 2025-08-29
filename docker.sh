@@ -109,31 +109,6 @@ confirm_action() {
     fi
 }
 
-# 安全切换目录函数 - 切换到指定目录并返回原始目录
-cd_with_restore() {
-    local target_dir="$1"
-    local original_dir="$(pwd)"
-    
-    if [[ -d "$target_dir" ]]; then
-        cd "$target_dir" || {
-            log_error "无法切换到目录: $target_dir"
-            return 1
-        }
-        echo "$original_dir"
-    else
-        log_error "目录不存在: $target_dir"
-        return 1
-    fi
-}
-
-# 返回脚本启动目录
-return_to_start_dir() {
-    cd "$SCRIPT_START_DIR" || {
-        log_error "无法返回脚本启动目录: $SCRIPT_START_DIR"
-        return 1
-    }
-}
-
 # ==================== 系统包管理器换源 ====================
 
 # 更新apt源为国内镜像（适用于Ubuntu/Debian）
@@ -1902,7 +1877,7 @@ EOF
 # 安装Redis服务
 install_redis_service() {
     log_purple "开始安装Redis服务..."
-
+    cd "$SCRIPT_START_DIR"
     # 检查Docker和Docker Compose
     if ! command_exists docker || ! command_exists docker-compose; then
         log_error "请先安装Docker和Docker Compose"
@@ -1962,7 +1937,6 @@ services:
       - ./data:/data
       - ./conf/redis.conf:/etc/redis/redis.conf
       - ./logs:/var/log/redis
-    user: "999:999"
     labels:
       createdBy: "Docker管理脚本"
 
@@ -2001,10 +1975,10 @@ EOF
         docker-compose ps
         
         # 返回原始目录
-        cd "$original_dir"
+        cd "$SCRIPT_START_DIR"
     else
         log_error "Redis服务启动失败"
-        cd "$original_dir"
+        cd "$SCRIPT_START_DIR"
         return 1
     fi
 }
@@ -2012,7 +1986,7 @@ EOF
 # 安装MySQL服务
 install_mysql_service() {
     log_purple "开始安装MySQL服务..."
-
+    cd "$SCRIPT_START_DIR"
     # 检查Docker和Docker Compose
     if ! command_exists docker || ! command_exists docker-compose; then
         log_error "请先安装Docker和Docker Compose"
@@ -2117,7 +2091,6 @@ EOF
 
     # 启动服务
     log_info "正在启动MySQL服务..."
-    local original_dir="$(pwd)"
     cd "$install_dir"
     
     if docker-compose up -d; then
@@ -2145,10 +2118,10 @@ EOF
         docker-compose ps
         
         # 返回原始目录
-        cd "$original_dir"
+        cd "$SCRIPT_START_DIR"
     else
         log_error "MySQL服务启动失败"
-        cd "$original_dir"
+        cd "$SCRIPT_START_DIR"
         return 1
     fi
 }
@@ -2156,6 +2129,7 @@ EOF
 # 安装PostgreSQL服务
 install_postgresql_service() {
     log_purple "开始安装PostgreSQL服务..."
+    cd "$SCRIPT_START_DIR"
 
     # 检查Docker和Docker Compose
     if ! command_exists docker || ! command_exists docker-compose; then
@@ -2262,10 +2236,10 @@ EOF
         docker-compose ps
         
         # 返回原始目录
-        cd "$original_dir"
+        cd "$SCRIPT_START_DIR"
     else
         log_error "PostgreSQL服务启动失败"
-        cd "$original_dir"
+        cd "$SCRIPT_START_DIR"
         return 1
     fi
 }
@@ -2273,7 +2247,7 @@ EOF
 # 安装Nginx服务
 install_nginx_service() {
     log_purple "开始安装Nginx服务..."
-
+    cd "$SCRIPT_START_DIR"
     # 检查Docker和Docker Compose
     if ! command_exists docker || ! command_exists docker-compose; then
         log_error "请先安装Docker和Docker Compose"
@@ -2414,10 +2388,10 @@ EOF
         docker-compose ps
         
         # 返回原始目录
-        cd "$original_dir"
+        cd "$SCRIPT_START_DIR"
     else
         log_error "Nginx服务启动失败"
-        cd "$original_dir"
+        cd "$SCRIPT_START_DIR"
         return 1
     fi
 }
