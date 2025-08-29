@@ -723,9 +723,9 @@ EOF
 
 # ==================== 容器管理相关函数 ====================
 
-# 停止所有运行中的容器
+# 交互式选择并停止运行中的容器
 stop_all_containers() {
-    log_purple "停止所有运行中的容器..."
+    log_purple "交互式选择停止运行中的容器..."
 
     if ! command_exists docker; then
         log_error "Docker未安装或未运行"
@@ -733,29 +733,121 @@ stop_all_containers() {
     fi
 
     local running_containers
-    running_containers=$(docker ps -q)
+    running_containers=$(docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}" 2>/dev/null | grep -E "Up\|running" || true)
 
     if [[ -z "$running_containers" ]]; then
         log_warn "没有运行中的容器"
         return 0
     fi
 
-    log_info "发现 $(echo "$running_containers" | wc -l) 个运行中的容器"
-    if confirm_action "确认停止所有运行中的容器？"; then
-        if docker stop $running_containers; then
-            log_info "所有容器已成功停止"
-        else
-            log_error "部分容器停止失败"
-            return 1
-        fi
-    else
+    # 显示运行中的容器列表
+    log_blue "=== 运行中的容器列表 ==="
+    local container_array=()
+    local i=1
+    
+    while IFS='|' read -r id name image status; do
+        container_array[i]="$id|$name|$image|$status"
+        printf "%-3s %-20s %-30s %s\n" "$i" "$name" "$image" "$status"
+        i=$((i + 1))
+    done <<< "$running_containers"
+    log_blue "========================"
+
+    echo
+    log_info "选择方式："
+    log_info "  输入容器编号（空格分隔多个），例如: 1 3 5"
+    log_info "  输入 'all' 停止所有容器"
+    log_info "  输入 'q' 或直接回车退出"
+
+    local selection
+    read -rp "> " selection
+
+    if [[ -z "$selection" || "$selection" == "q" ]]; then
         log_info "操作已取消"
+        return 0
     fi
+
+    local selected_containers=""
+    if [[ "$selection" == "all" ]]; then
+        selected_containers=$(echo "$running_containers" | cut -d'|' -f1)
+    else
+        # 解析用户输入的编号
+        for num in $selection; do
+            if [[ "$num" =~ ^[0-9]+$ ]]; then
+                local container_info
+                container_info=$(echo "$running_containers" | sed -n "${num}p")
+                if [[ -n "$container_info" ]]; then
+                    local container_id=$(echo "$container_info" | cut -d'|' -f1)
+                    local container_name=$(echo "$container_info" | cut -d'|' -f2)
+                    selected_containers+="$container_id\n"
+                else
+                    log_warn "无效编号: $num"
+                fi
+            else
+                log_warn "无效输入: $num"
+            fi
+        done
+        selected_containers=$(echo -e "$selected_containers" | sed '/^$/d')
+    fi
+
+    if [[ -z "$selected_containers" ]]; then
+        log_error "没有有效的容器被选中"
+        return 1
+    fi
+
+    # 显示选中的容器
+    local selected_count
+    selected_count=$(echo "$selected_containers" | wc -l)
+    log_info "已选择 $selected_count 个容器:"
+    
+    local container_ids=($selected_containers)
+    for container_id in "${container_ids[@]}"; do
+        local container_info
+        container_info=$(docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}" --filter "id=$container_id" 2>/dev/null)
+        if [[ -n "$container_info" ]]; then
+            local name=$(echo "$container_info" | cut -d'|' -f2)
+            echo "  - $name ($container_id)"
+        fi
+    done
+
+    echo
+    if ! confirm_action "确认停止这些容器？"; then
+        log_info "操作已取消"
+        return 0
+    fi
+
+    # 开始停止容器
+    local current=0
+    local success_count=0
+    local fail_count=0
+
+    for container_id in "${container_ids[@]}"; do
+        [[ -z "$container_id" ]] && continue
+        current=$((current + 1))
+
+        local container_name
+        container_name=$(docker ps --format "{{.Names}}" --filter "id=$container_id" 2>/dev/null || echo "$container_id")
+
+        log_info "[$current/$selected_count] 正在停止: $container_name"
+
+        if docker stop "$container_id" >/dev/null 2>&1; then
+            log_info "✓ 停止成功: $container_name"
+            success_count=$((success_count + 1))
+        else
+            log_error "✗ 停止失败: $container_name"
+            fail_count=$((fail_count + 1))
+        fi
+    done
+
+    echo
+    log_info "=== 停止完成统计 ==="
+    log_info "总容器数: $selected_count"
+    log_info "成功: $success_count"
+    [[ $fail_count -gt 0 ]] && log_warn "失败: $fail_count"
 }
 
-# 删除所有容器（包括已停止的）
+# 交互式选择并删除容器
 remove_all_containers() {
-    log_purple "删除所有容器..."
+    log_purple "交互式选择删除容器..."
 
     if ! command_exists docker; then
         log_error "Docker未安装或未运行"
@@ -763,35 +855,126 @@ remove_all_containers() {
     fi
 
     local all_containers
-    all_containers=$(docker ps -aq)
+    all_containers=$(docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}" 2>/dev/null)
 
     if [[ -z "$all_containers" ]]; then
         log_warn "没有容器需要删除"
         return 0
     fi
 
-    local container_count
-    container_count=$(echo "$all_containers" | wc -l)
+    # 显示所有容器列表
+    log_blue "=== 所有容器列表 ==="
+    local container_array=()
+    local i=1
+    
+    while IFS='|' read -r id name image status; do
+        container_array[i]="$id|$name|$image|$status"
+        printf "%-3s %-20s %-30s %s\n" "$i" "$name" "$image" "$status"
+        i=$((i + 1))
+    done <<< "$all_containers"
+    log_blue "========================"
 
-    log_warn "发现 $container_count 个容器（包括运行中和已停止的）"
-    if confirm_action "⚠️  这将删除所有容器，包括其中的数据！确认继续？"; then
-        # 先停止所有运行中的容器
-        docker stop $all_containers >/dev/null 2>&1 || true
-        # 删除所有容器
-        if docker rm $all_containers; then
-            log_info "所有容器已删除"
-        else
-            log_error "部分容器删除失败"
-            return 1
-        fi
-    else
+    echo
+    log_info "选择方式："
+    log_info "  输入容器编号（空格分隔多个），例如: 1 3 5"
+    log_info "  输入 'all' 删除所有容器"
+    log_info "  输入 'q' 或直接回车退出"
+
+    local selection
+    read -rp "> " selection
+
+    if [[ -z "$selection" || "$selection" == "q" ]]; then
         log_info "操作已取消"
+        return 0
     fi
+
+    local selected_containers=""
+    if [[ "$selection" == "all" ]]; then
+        selected_containers=$(echo "$all_containers" | cut -d'|' -f1)
+    else
+        # 解析用户输入的编号
+        for num in $selection; do
+            if [[ "$num" =~ ^[0-9]+$ ]]; then
+                local container_info
+                container_info=$(echo "$all_containers" | sed -n "${num}p")
+                if [[ -n "$container_info" ]]; then
+                    local container_id=$(echo "$container_info" | cut -d'|' -f1)
+                    selected_containers+="$container_id\n"
+                else
+                    log_warn "无效编号: $num"
+                fi
+            else
+                log_warn "无效输入: $num"
+            fi
+        done
+        selected_containers=$(echo -e "$selected_containers" | sed '/^$/d')
+    fi
+
+    if [[ -z "$selected_containers" ]]; then
+        log_error "没有有效的容器被选中"
+        return 1
+    fi
+
+    # 显示选中的容器
+    local selected_count
+    selected_count=$(echo "$selected_containers" | wc -l)
+    log_info "已选择 $selected_count 个容器:"
+    
+    local container_ids=($selected_containers)
+    for container_id in "${container_ids[@]}"; do
+        local container_info
+        container_info=$(docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}" --filter "id=$container_id" 2>/dev/null)
+        if [[ -n "$container_info" ]]; then
+            local name=$(echo "$container_info" | cut -d'|' -f2)
+            echo "  - $name ($container_id)"
+        fi
+    done
+
+    echo
+    if ! confirm_action "⚠️  这将删除选中的容器，包括其中的数据！确认继续？"; then
+        log_info "操作已取消"
+        return 0
+    fi
+
+    # 开始删除容器
+    local current=0
+    local success_count=0
+    local fail_count=0
+
+    for container_id in "${container_ids[@]}"; do
+        [[ -z "$container_id" ]] && continue
+        current=$((current + 1))
+
+        local container_name
+        container_name=$(docker ps -a --format "{{.Names}}" --filter "id=$container_id" 2>/dev/null || echo "$container_id")
+
+        log_info "[$current/$selected_count] 正在删除: $container_name"
+
+        # 先停止容器（如果是运行中的）
+        if docker ps --filter "id=$container_id" --format "{{.ID}}" | grep -q "$container_id"; then
+            log_info "  正在停止运行中的容器: $container_name"
+            docker stop "$container_id" >/dev/null 2>&1 || true
+        fi
+
+        if docker rm "$container_id" >/dev/null 2>&1; then
+            log_info "✓ 删除成功: $container_name"
+            success_count=$((success_count + 1))
+        else
+            log_error "✗ 删除失败: $container_name"
+            fail_count=$((fail_count + 1))
+        fi
+    done
+
+    echo
+    log_info "=== 删除完成统计 ==="
+    log_info "总容器数: $selected_count"
+    log_info "成功: $success_count"
+    [[ $fail_count -gt 0 ]] && log_warn "失败: $fail_count"
 }
 
-# 启动所有已停止的容器
+# 交互式选择并启动已停止的容器
 start_all_containers() {
-    log_purple "启动所有已停止的容器..."
+    log_purple "交互式选择启动已停止的容器..."
 
     if ! command_exists docker; then
         log_error "Docker未安装或未运行"
@@ -799,23 +982,115 @@ start_all_containers() {
     fi
 
     local stopped_containers
-    stopped_containers=$(docker ps -aq -f status=exited)
+    stopped_containers=$(docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}" 2>/dev/null | grep -E "(Exited|Created)" || true)
 
     if [[ -z "$stopped_containers" ]]; then
         log_warn "没有已停止的容器需要启动"
         return 0
     fi
 
-    local container_count
-    container_count=$(echo "$stopped_containers" | wc -l)
+    # 显示已停止的容器列表
+    log_blue "=== 已停止的容器列表 ==="
+    local container_array=()
+    local i=1
+    
+    while IFS='|' read -r id name image status; do
+        container_array[i]="$id|$name|$image|$status"
+        printf "%-3s %-20s %-30s %s\n" "$i" "$name" "$image" "$status"
+        i=$((i + 1))
+    done <<< "$stopped_containers"
+    log_blue "========================"
 
-    log_info "发现 $container_count 个已停止的容器"
-    if docker start $stopped_containers; then
-        log_info "所有已停止的容器已启动"
+    echo
+    log_info "选择方式："
+    log_info "  输入容器编号（空格分隔多个），例如: 1 3 5"
+    log_info "  输入 'all' 启动所有已停止的容器"
+    log_info "  输入 'q' 或直接回车退出"
+
+    local selection
+    read -rp "> " selection
+
+    if [[ -z "$selection" || "$selection" == "q" ]]; then
+        log_info "操作已取消"
+        return 0
+    fi
+
+    local selected_containers=""
+    if [[ "$selection" == "all" ]]; then
+        selected_containers=$(echo "$stopped_containers" | cut -d'|' -f1)
     else
-        log_error "部分容器启动失败"
+        # 解析用户输入的编号
+        for num in $selection; do
+            if [[ "$num" =~ ^[0-9]+$ ]]; then
+                local container_info
+                container_info=$(echo "$stopped_containers" | sed -n "${num}p")
+                if [[ -n "$container_info" ]]; then
+                    local container_id=$(echo "$container_info" | cut -d'|' -f1)
+                    selected_containers+="$container_id\n"
+                else
+                    log_warn "无效编号: $num"
+                fi
+            else
+                log_warn "无效输入: $num"
+            fi
+        done
+        selected_containers=$(echo -e "$selected_containers" | sed '/^$/d')
+    fi
+
+    if [[ -z "$selected_containers" ]]; then
+        log_error "没有有效的容器被选中"
         return 1
     fi
+
+    # 显示选中的容器
+    local selected_count
+    selected_count=$(echo "$selected_containers" | wc -l)
+    log_info "已选择 $selected_count 个容器:"
+    
+    local container_ids=($selected_containers)
+    for container_id in "${container_ids[@]}"; do
+        local container_info
+        container_info=$(docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}" --filter "id=$container_id" 2>/dev/null)
+        if [[ -n "$container_info" ]]; then
+            local name=$(echo "$container_info" | cut -d'|' -f2)
+            echo "  - $name ($container_id)"
+        fi
+    done
+
+    echo
+    if ! confirm_action "确认启动这些容器？"; then
+        log_info "操作已取消"
+        return 0
+    fi
+
+    # 开始启动容器
+    local current=0
+    local success_count=0
+    local fail_count=0
+
+    for container_id in "${container_ids[@]}"; do
+        [[ -z "$container_id" ]] && continue
+        current=$((current + 1))
+
+        local container_name
+        container_name=$(docker ps -a --format "{{.Names}}" --filter "id=$container_id" 2>/dev/null || echo "$container_id")
+
+        log_info "[$current/$selected_count] 正在启动: $container_name"
+
+        if docker start "$container_id" >/dev/null 2>&1; then
+            log_info "✓ 启动成功: $container_name"
+            success_count=$((success_count + 1))
+        else
+            log_error "✗ 启动失败: $container_name"
+            fail_count=$((fail_count + 1))
+        fi
+    done
+
+    echo
+    log_info "=== 启动完成统计 ==="
+    log_info "总容器数: $selected_count"
+    log_info "成功: $success_count"
+    [[ $fail_count -gt 0 ]] && log_warn "失败: $fail_count"
 }
 
 # ==================== 镜像管理相关函数 ====================
@@ -1164,6 +1439,69 @@ clean_docker_system() {
 
 # ==================== Docker状态和信息相关函数 ====================
 
+# 查看容器日志（交互式选择容器）
+view_container_logs() {
+    log_purple "查看容器日志..."
+
+    if ! command_exists docker; then
+        log_error "Docker未安装或未运行"
+        return 1
+    fi
+
+    # 获取所有容器列表（包括运行中和已停止的）
+    local containers
+    containers=$(docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}" 2>/dev/null)
+
+    if [[ -z "$containers" ]]; then
+        log_warn "没有找到任何容器"
+        return 0
+    fi
+
+    # 显示容器列表
+    log_blue "=== 容器列表 ==="
+    local container_array=()
+    local i=1
+    
+    while IFS='|' read -r id name image status; do
+        container_array[i]="$id|$name|$image|$status"
+        printf "%-3s %-20s %-30s %s\n" "$i" "$name" "$image" "$status"
+        i=$((i + 1))
+    done <<< "$containers"
+
+    echo
+    log_info "请选择要查看日志的容器（输入编号，按回车确认，q退出）:"
+    
+    local selected_index
+    while true; do
+        read -rp "> " selected_index
+        
+        # 检查是否退出
+        if [[ "$selected_index" == "q" || "$selected_index" == "Q" || -z "$selected_index" ]]; then
+            log_info "已取消操作"
+            return 0
+        fi
+        
+        # 验证输入是否为有效数字
+        if [[ "$selected_index" =~ ^[0-9]+$ ]] && [[ "$selected_index" -ge 1 ]] && [[ "$selected_index" -lt "$i" ]]; then
+            break
+        else
+            log_error "无效的选择，请输入 1-$((i-1)) 之间的数字"
+        fi
+    done
+
+    # 获取选中的容器信息
+    local selected_container="${container_array[selected_index]}"
+    local container_id=$(echo "$selected_container" | cut -d'|' -f1)
+    local container_name=$(echo "$selected_container" | cut -d'|' -f2)
+
+    log_info "正在查看容器 '$container_name' 的日志..."
+    log_info "使用命令: docker logs -f --tail 100 $container_name"
+    echo
+    
+    # 使用docker logs查看日志
+    docker logs -f --tail 100 "$container_name"
+}
+
 # 显示Docker详细状态
 show_docker_status() {
     log_purple "Docker系统状态检查..."
@@ -1183,35 +1521,42 @@ show_docker_status() {
             log_info "Docker守护进程: 响应正常 ✓"
             systemctl status docker --no-pager -l | head -10 || true
 
-            # Docker版本信息
+            # 版本信息
             echo
-            log_blue "=== Docker版本信息 ==="
-            docker version --format 'Client: {{.Client.Version}}' 2>/dev/null || log_error "无法获取Docker客户端版本"
-            docker version --format 'Server: {{.Server.Version}}' 2>/dev/null || log_error "无法获取Docker服务端版本"
-
-            # Docker Compose版本
-            echo
-            log_blue "=== Docker Compose状态 ==="
+            log_blue "=== 版本信息 ==="
+            local docker_client=$(docker version --format '{{.Client.Version}}' 2>/dev/null || echo "未知")
+            local docker_server=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "未知")
+            local compose_version="未安装"
+            
             if command_exists docker-compose; then
-                docker-compose version --short 2>/dev/null || log_warn "Docker Compose版本获取失败"
-            else
-                log_warn "Docker Compose未安装"
+                compose_version=$(docker-compose version --short 2>/dev/null || echo "未知")
             fi
+            
+            log_info "Docker: $docker_client (客户端) / $docker_server (服务端)"
+            log_info "Docker Compose: $compose_version"
 
             # 容器状态
             echo
             log_blue "=== 容器状态 ==="
-            local running_count total_count
+            local running_count stopped_count total_count
             running_count=$(docker ps -q | wc -l)
+            stopped_count=$(docker ps -a --filter "status=exited" --format "{{.ID}}" 2>/dev/null | wc -l)
             total_count=$(docker ps -aq | wc -l)
 
             log_info "运行中容器: $running_count"
+            log_info "已停止容器: $stopped_count"
             log_info "总容器数: $total_count"
 
             if [[ $running_count -gt 0 ]]; then
                 echo
                 log_info "运行中的容器:"
                 docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"
+            fi
+
+            if [[ $stopped_count -gt 0 ]]; then
+                echo
+                log_info "已停止的容器:"
+                docker ps -a --filter "status=exited" --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null || true
             fi
 
             # 镜像状态
@@ -1365,35 +1710,35 @@ uninstall_docker() {
 show_menu() {
     clear
     echo
-    log_blue "╔══════════════════════════════════════════════════════════╗"
-    log_blue "║                    Docker 管理脚本 v${SCRIPT_VERSION}                    ║"
-    log_blue "╠══════════════════════════════════════════════════════════╣"
-    echo "║  📋 Docker 状态管理                                          ║"
-    echo "║    1. 查看 Docker 详细状态                                   ║"
-    echo "║                                                              ║"
-    echo "║  📦 容器管理                                                  ║"
-    echo "║    2. 启动所有已停止的容器                                   ║"
-    echo "║    3. 停止所有运行中的容器                                   ║"
-    echo "║    4. 删除所有容器                                           ║"
-    echo "║                                                              ║"
-    echo "║  🏗️  镜像管理                                                  ║"
-    echo "║    5. 选择导出镜像                                          ║"
-    echo "║    6. 从目录导入镜像                                         ║"
-    echo "║                                                              ║"
-    echo "║  🛠️  系统管理                                                  ║"
-    echo "║    7. 清理 Docker 系统                                       ║"
-    echo "║    8. 配置 Docker 镜像加速器                                 ║"
-    echo "║                                                              ║"
-    echo "║  ⚙️  安装配置                                                  ║"
-    echo "║    9. 换国内源(apt/yum/dnf)                                 ║"
-    echo "║   10. 一键安装 Docker                                        ║"
-    echo "║   11. 安装 Docker Compose                                    ║"
-    echo "║                                                              ║"
-    echo "║  🗑️  卸载                                                      ║"
-    echo "║   12. 完全卸载 Docker                                        ║"
-    echo "║                                                              ║"
-    echo "║    0. 退出脚本                                               ║"
-    log_blue "╚══════════════════════════════════════════════════════════╝"
+    echo "================ Docker 管理脚本 v${SCRIPT_VERSION} ================"
+    echo
+    echo "📋 Docker 状态管理:"
+    echo "  1. 查看 Docker 详细状态"
+    echo "  2. 查看容器日志"
+    echo
+    echo "📦 容器管理:"
+    echo "  3. 选择启动容器"
+    echo "  4. 选择停止容器"
+    echo "  5. 选择删除容器"
+    echo
+    echo "🏗️ 镜像管理:"
+    echo "  6. 选择导出镜像"
+    echo "  7. 从目录导入镜像"
+    echo
+    echo "🛠️ 系统管理:"
+    echo "  8. 清理 Docker 系统"
+    echo "  9. 配置 Docker 镜像加速器"
+    echo
+    echo "⚙️ 安装配置:"
+    echo "  10. 换国内源(apt/yum/dnf)"
+    echo "  11. 一键安装 Docker"
+    echo "  12. 安装 Docker Compose"
+    echo
+    echo "🗑️ 卸载:"
+    echo "  13. 完全卸载 Docker"
+    echo
+    echo "  0. 退出脚本"
+    echo "=================================================="
     echo
 }
 
@@ -1408,22 +1753,23 @@ main() {
         show_menu
 
         local choice
-        read -rp "请选择操作 [0-12]: " choice
+        read -rp "请选择操作 [0-13]: " choice
 
         echo
         case $choice in
             1) show_docker_status ;;
-            2) start_all_containers ;;
-            3) stop_all_containers ;;
-            4) remove_all_containers ;;
-            5) export_selected_images ;;
-            6) import_images_from_dir ;;
-            7) clean_docker_system ;;
-            8)
+            2) view_container_logs ;;
+            3) start_all_containers ;;
+            4) stop_all_containers ;;
+            5) remove_all_containers ;;
+            6) export_selected_images ;;
+            7) import_images_from_dir ;;
+            8) clean_docker_system ;;
+            9)
                 check_root
                 change_docker_mirror
                 ;;
-            9)
+            10)
                 check_root
                 local os_type
                 os_type=$(detect_os)
@@ -1443,15 +1789,15 @@ main() {
                     log_error "无法检测操作系统类型"
                 fi
                 ;;
-            10)
+            11)
                 check_root
                 install_docker
                 ;;
-            11)
+            12)
                 check_root
                 install_docker_compose
                 ;;
-            12)
+            13)
                 check_root
                 uninstall_docker
                 ;;
@@ -1460,7 +1806,7 @@ main() {
                 exit 0
                 ;;
             *)
-                log_error "无效选择，请输入 0-12 之间的数字"
+                log_error "无效选择，请输入 0-13 之间的数字"
                 ;;
         esac
 
