@@ -19,7 +19,10 @@ readonly PURPLE='\033[0;35m'
 readonly NC='\033[0m' # No Color
 
 # 脚本版本
-readonly SCRIPT_VERSION="3.0.2"
+readonly SCRIPT_VERSION="4.0.1"
+
+# 脚本启动时的目录
+readonly SCRIPT_START_DIR="$(pwd)"
 
 # Docker Compose稳定版本（当GitHub API不可用时的备用版本）
 readonly COMPOSE_FALLBACK_VERSION="v2.24.6"
@@ -104,6 +107,31 @@ confirm_action() {
         read -rp "$message [y/N]: " confirm
         [[ "$confirm" =~ ^[yY]$ ]]
     fi
+}
+
+# 安全切换目录函数 - 切换到指定目录并返回原始目录
+cd_with_restore() {
+    local target_dir="$1"
+    local original_dir="$(pwd)"
+    
+    if [[ -d "$target_dir" ]]; then
+        cd "$target_dir" || {
+            log_error "无法切换到目录: $target_dir"
+            return 1
+        }
+        echo "$original_dir"
+    else
+        log_error "目录不存在: $target_dir"
+        return 1
+    fi
+}
+
+# 返回脚本启动目录
+return_to_start_dir() {
+    cd "$SCRIPT_START_DIR" || {
+        log_error "无法返回脚本启动目录: $SCRIPT_START_DIR"
+        return 1
+    }
 }
 
 # ==================== 系统包管理器换源 ====================
@@ -1945,6 +1973,7 @@ EOF
 
     # 启动服务
     log_info "正在启动Redis服务..."
+    local original_dir="$(pwd)"
     cd "$install_dir"
     
     if docker-compose up -d; then
@@ -1970,8 +1999,12 @@ EOF
         # 显示服务状态
         sleep 2
         docker-compose ps
+        
+        # 返回原始目录
+        cd "$original_dir"
     else
         log_error "Redis服务启动失败"
+        cd "$original_dir"
         return 1
     fi
 }
@@ -2084,6 +2117,7 @@ EOF
 
     # 启动服务
     log_info "正在启动MySQL服务..."
+    local original_dir="$(pwd)"
     cd "$install_dir"
     
     if docker-compose up -d; then
@@ -2109,8 +2143,12 @@ EOF
         # 显示服务状态
         sleep 5
         docker-compose ps
+        
+        # 返回原始目录
+        cd "$original_dir"
     else
         log_error "MySQL服务启动失败"
+        cd "$original_dir"
         return 1
     fi
 }
@@ -2196,6 +2234,7 @@ EOF
 
     # 启动服务
     log_info "正在启动PostgreSQL服务..."
+    local original_dir="$(pwd)"
     cd "$install_dir"
     
     if docker-compose up -d; then
@@ -2221,8 +2260,12 @@ EOF
         # 显示服务状态
         sleep 5
         docker-compose ps
+        
+        # 返回原始目录
+        cd "$original_dir"
     else
         log_error "PostgreSQL服务启动失败"
+        cd "$original_dir"
         return 1
     fi
 }
@@ -2345,6 +2388,7 @@ EOF
 
     # 启动服务
     log_info "正在启动Nginx服务..."
+    local original_dir="$(pwd)"
     cd "$install_dir"
     
     if docker-compose up -d; then
@@ -2368,8 +2412,12 @@ EOF
         # 显示服务状态
         sleep 3
         docker-compose ps
+        
+        # 返回原始目录
+        cd "$original_dir"
     else
         log_error "Nginx服务启动失败"
+        cd "$original_dir"
         return 1
     fi
 }
