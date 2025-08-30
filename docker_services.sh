@@ -1032,103 +1032,54 @@ install_clickhouse_service() {
         fi
     fi
 
+    local clickhouse_user="admin"
+    read -rp "用户名 [${clickhouse_user}]: " input_user
+    clickhouse_user=${input_user:-$clickhouse_user}
+
     local clickhouse_password=""
-    read -rp "ClickHouse 密码 (留空则无密码): " clickhouse_password
+    read -rp "${clickhouse_user} 密码 (留空自动生成): " clickhouse_password
+    if [[ -z "$clickhouse_password" ]]; then
+        clickhouse_password="$(generate_password 16)"
+        log_info "已生成随机密码: ${clickhouse_password}"
+    fi
 
     local install_dir="./clickhouse"
     read -rp "安装目录 [${install_dir}]: " input_dir
     install_dir=${input_dir:-$install_dir}
 
     # 创建安装目录
-    mkdir -p "$install_dir"/{data,logs,config}
+    mkdir -p "$install_dir"/{data,log,config.d,users.d}
 
-    # 生成ClickHouse配置文件
-    cat > "$install_dir/config/config.xml" <<EOF
-<?xml version="1.0"?>
-<yandex>
-    <logger>
-        <level>trace</level>
-        <log>/var/log/clickhouse-server/clickhouse-server.log</log>
-        <errorlog>/var/log/clickhouse-server/clickhouse-server.err.log</errorlog>
-        <size>1000M</size>
-        <count>10</count>
-    </logger>
-
-    <http_port>8123</http_port>
-    <tcp_port>9000</tcp_port>
-    <mysql_port>9004</mysql_port>
-    <postgresql_port>9005</postgresql_port>
-
+    # 生成ClickHouse主配置文件
+    cat > "$install_dir/config.d/config.xml" <<EOF
+<clickhouse>
+    <!-- Listen wildcard address to allow accepting connections from other containers and host network. -->
+    <listen_host>::</listen_host>
     <listen_host>0.0.0.0</listen_host>
+    <listen_try>1</listen_try>
 
-    <max_connections>4096</max_connections>
-    <keep_alive_timeout>3</keep_alive_timeout>
-    <max_concurrent_queries>100</max_concurrent_queries>
-
-    <path>/var/lib/clickhouse/</path>
-    <tmp_path>/var/lib/clickhouse/tmp/</tmp_path>
-    <user_files_path>/var/lib/clickhouse/user_files/</user_files_path>
-
-    <users_config>users.xml</users_config>
-
-    <default_profile>default</default_profile>
-    <default_database>default</default_database>
-
-    <timezone>Asia/Shanghai</timezone>
-
-    <mlock_executable>false</mlock_executable>
-
-    <remote_servers incl="clickhouse_remote_servers" />
-    <zookeeper incl="zookeeper-servers" optional="true" />
-    <macros incl="macros" optional="true" />
-
-    <builtin_dictionaries_reload_interval>3600</builtin_dictionaries_reload_interval>
-
-    <max_session_timeout>3600</max_session_timeout>
-    <default_session_timeout>60</default_session_timeout>
-</yandex>
+    <!--
+    <logger>
+        <console>1</console>
+    </logger> 
+    -->
+</clickhouse>
 EOF
 
     # 生成用户配置文件
-    cat > "$install_dir/config/users.xml" <<EOF
-<?xml version="1.0"?>
-<yandex>
-    <profiles>
-        <default>
-            <max_memory_usage>10000000000</max_memory_usage>
-            <use_uncompressed_cache>0</use_uncompressed_cache>
-            <load_balancing>random</load_balancing>
-        </default>
-
-        <readonly>
-            <readonly>1</readonly>
-        </readonly>
-    </profiles>
-
+    cat > "$install_dir/users.d/root.xml" <<EOF
+<clickhouse>
     <users>
-        <default>
-            ${clickhouse_password:+<password>${clickhouse_password}</password>}
-            <networks incl="networks" replace="replace">
-                <ip>::/0</ip>
+        <${clickhouse_user}>
+            <password>${clickhouse_password}</password>
+            <networks>
+                <ip>::/0</ip> 
             </networks>
-            <profile>default</profile>
-            <quota>default</quota>
-        </default>
+            <access_management>1</access_management>
+            <named_collection_control>1</named_collection_control>
+        </${clickhouse_user}>
     </users>
-
-    <quotas>
-        <default>
-            <interval>
-                <duration>3600</duration>
-                <queries>0</queries>
-                <errors>0</errors>
-                <result_rows>0</result_rows>
-                <read_rows>0</read_rows>
-                <execution_time>0</execution_time>
-            </interval>
-        </default>
-    </quotas>
-</yandex>
+</clickhouse>
 EOF
 
     # 生成docker-compose.yml
@@ -1137,30 +1088,28 @@ version: '3.8'
 
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:23.8.2.7-alpine
-    restart: always
+    image: clickhouse/clickhouse-server:latest
     container_name: ${container_name}
+    restart: always
+    privileged: true
     networks:
       - ${DEFAULT_NETWORK}
     ports:
       - "${http_port}:8123"
       - "${native_port}:9000"
-      - "9004:9004"
-      - "9005:9005"
-    environment:
-      CLICKHOUSE_DB: default
-      ${clickhouse_password:+CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1}
-    volumes:
-      - ./data:/var/lib/clickhouse
-      - ./logs:/var/log/clickhouse-server
-      - ./config/config.xml:/etc/clickhouse-server/config.xml
-      - ./config/users.xml:/etc/clickhouse-server/users.xml
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/var/lib/clickhouse
+      - ./config.d:/etc/clickhouse-server/config.d
+      - ./users.d:/etc/clickhouse-server/users.d
+      - ./log:/var/log/clickhouse-server
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      test: ["CMD", "clickhouse-client", "--user", "${clickhouse_user}", "--password", "${clickhouse_password}", "--query", "SELECT 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -1178,19 +1127,14 @@ EOF
         log_info "  容器名称: ${container_name}"
         log_info "  HTTP 端口: ${http_port}:8123"
         log_info "  Native 端口: ${native_port}:9000"
-        log_info "  MySQL 协议端口: 9004:9004"
-        log_info "  PostgreSQL 协议端口: 9005:9005"
-        log_info "  用户名: default"
-
-        if [[ -n "$clickhouse_password" ]]; then
-            log_info "  密码: ${clickhouse_password}"
-            log_info "  连接命令: clickhouse-client --host ${local_ip} --port ${native_port} --user default --password ${clickhouse_password}"
-        else
-            log_info "  连接命令: clickhouse-client --host ${local_ip} --port ${native_port}"
-        fi
-
+        log_info "  管理员用户名: ${clickhouse_user}"
+        log_info "  管理员密码: ${clickhouse_password}"
+        log_info "  连接命令: clickhouse-client --host ${local_ip} --port ${native_port} --user ${clickhouse_user} --password ${clickhouse_password}"
         log_info "  Web界面: http://${local_ip}:${http_port}/play"
         log_info "  数据目录: $(realpath $install_dir)/data"
+        log_info "  配置目录: $(realpath $install_dir)/config.d"
+        log_info "  用户配置: $(realpath $install_dir)/users.d"
+        log_warn "注意: 访问Web界面时请使用管理员用户名和密码登录"
     fi
 }
 
