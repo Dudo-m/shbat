@@ -5,13 +5,13 @@
 #### github
 
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/qoder/docker.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker.sh)
 ```
 
 #### gitee
 
 ```
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/qoder/docker.sh)
+bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker.sh)
 ```
 
 ### 常用服务安装脚本 (docker_services.sh)
@@ -19,11 +19,11 @@ bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/qoder/docker.sh)
 #### github
 
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/qoder/docker_services.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker_services.sh)
 ```
 
 #### gitee
 
 ```
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/qoder/docker_services.sh)
+bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker_services.sh)
 ```

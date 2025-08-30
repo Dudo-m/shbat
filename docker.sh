@@ -466,7 +466,7 @@ install_docker_compose() {
     case "${source_choice:-1}" in
         2)
             log_info "使用国内源安装Docker Compose..."
-            install_docker_compose_cn_impl
+            install_compose_via_package_manager
             ;;
         *)
             log_info "使用官方源安装Docker Compose..."
@@ -510,31 +510,10 @@ install_docker_compose_official_impl() {
     fi
 }
 
-# Docker Compose国内源安装实现
-install_docker_compose_cn_impl() {
-    check_network
-
-    # 方法1：通过包管理器安装（推荐，稳定性最好）
-    if install_compose_via_package_manager; then
-        return 0
-    fi
-
-    # 方法2：通过国内镜像源下载二进制文件
-    if install_compose_via_mirror; then
-        return 0
-    fi
-
-    # 方法3：通过pip安装（备用方案）
-    if install_compose_via_pip; then
-        return 0
-    fi
-
-    log_error "所有安装方法都失败了"
-    return 1
-}
-
 # 通过包管理器安装Docker Compose
 install_compose_via_package_manager() {
+    check_network
+    
     log_info "尝试通过系统包管理器安装..."
 
     if command_exists apt-get; then
@@ -559,114 +538,50 @@ EOF
         fi
 
     elif command_exists yum; then
-        # CentOS/RHEL：尝试通过EPEL源安装
+        # CentOS/RHEL：先尝试安装docker-compose-plugin
         yum install -y epel-release 2>/dev/null || true
+        if yum install -y docker-compose-plugin; then
+            # 创建docker-compose命令的软链接以兼容旧版本使用习惯
+            if [[ ! -f /usr/local/bin/docker-compose ]]; then
+                cat > /usr/local/bin/docker-compose <<'EOF'
+#!/bin/bash
+exec docker compose "$@"
+EOF
+                chmod +x /usr/local/bin/docker-compose
+            fi
+            log_info "通过yum安装docker-compose-plugin成功"
+            return 0
+        fi
+
+        # 如果plugin安装失败，尝试传统的docker-compose包
         if yum install -y docker-compose; then
             log_info "通过yum安装docker-compose成功"
             return 0
         fi
 
     elif command_exists dnf; then
-        # Fedora：通过dnf安装
+        # Fedora：先尝试安装docker-compose-plugin
+        if dnf install -y docker-compose-plugin; then
+            # 创建docker-compose命令的软链接以兼容旧版本使用习惯
+            if [[ ! -f /usr/local/bin/docker-compose ]]; then
+                cat > /usr/local/bin/docker-compose <<'EOF'
+#!/bin/bash
+exec docker compose "$@"
+EOF
+                chmod +x /usr/local/bin/docker-compose
+            fi
+            log_info "通过dnf安装docker-compose-plugin成功"
+            return 0
+        fi
+
+        # 如果plugin安装失败，尝试传统的docker-compose包
         if dnf install -y docker-compose; then
             log_info "通过dnf安装docker-compose成功"
             return 0
         fi
     fi
 
-    log_warn "包管理器安装失败，尝试其他方法..."
-    return 1
-}
-
-# 通过国内镜像源下载安装Docker Compose
-install_compose_via_mirror() {
-    log_info "尝试通过国内镜像源下载安装..."
-
-    local version
-    version=$(get_latest_compose_version)
-
-    local arch
-    arch=$(uname -m)
-    local os
-    os=$(uname -s | tr '[:upper:]' '[:lower:]')
-
-    # 架构适配
-    case $arch in
-        x86_64) arch="x86_64" ;;
-        aarch64) arch="aarch64" ;;
-        armv7l) arch="armv7" ;;
-        *) log_error "不支持的架构: $arch"; return 1 ;;
-    esac
-
-    # 国内镜像源列表（按可靠性排序）
-    local mirrors=(
-        "https://get.daocloud.io/docker/compose/releases/download"
-        "https://github.91chi.fun/https://github.com/docker/compose/releases/download"
-        "https://hub.fastgit.xyz/docker/compose/releases/download"
-        "https://download.fastgit.org/docker/compose/releases/download"
-    )
-
-    local filename="docker-compose-${os}-${arch}"
-
-    for mirror in "${mirrors[@]}"; do
-        local download_url="${mirror}/${version}/${filename}"
-        log_info "尝试从 ${mirror} 下载..."
-
-        if curl -L --fail --connect-timeout 15 --max-time 120 \
-            --progress-bar "$download_url" -o /usr/local/bin/docker-compose; then
-            chmod +x /usr/local/bin/docker-compose
-
-            # 验证安装
-            if /usr/local/bin/docker-compose --version >/dev/null 2>&1; then
-                log_info "Docker Compose安装成功！"
-                docker-compose --version
-                return 0
-            else
-                log_warn "下载的文件无效，删除并尝试下一个源..."
-                rm -f /usr/local/bin/docker-compose
-            fi
-        else
-            log_warn "从 ${mirror} 下载失败"
-        fi
-    done
-
-    log_warn "所有镜像源下载都失败"
-    return 1
-}
-
-# 通过pip安装Docker Compose（备用方案）
-install_compose_via_pip() {
-    log_info "尝试通过pip安装（备用方案）..."
-
-    # 检查或安装pip
-    if ! command_exists pip3 && ! command_exists pip; then
-        log_info "安装pip..."
-        if command_exists apt-get; then
-            apt-get install -y python3-pip
-        elif command_exists yum; then
-            yum install -y python3-pip
-        elif command_exists dnf; then
-            dnf install -y python3-pip
-        else
-            log_warn "无法安装pip，跳过此方法"
-            return 1
-        fi
-    fi
-
-    # 使用国内pip源安装
-    local pip_cmd
-    pip_cmd=$(command -v pip3 || command -v pip)
-
-    if [[ -n "$pip_cmd" ]]; then
-        log_info "通过pip安装docker-compose..."
-        if "$pip_cmd" install docker-compose -i https://pypi.tuna.tsinghua.edu.cn/simple; then
-            log_info "通过pip安装docker-compose成功"
-            docker-compose --version
-            return 0
-        fi
-    fi
-
-    log_warn "pip安装失败"
+    log_error "所有安装方法都失败了"
     return 1
 }
 
