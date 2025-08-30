@@ -1375,52 +1375,6 @@ EOF
 
 # ==================== 菜单和主程序 ====================
 
-# 显示服务状态
-show_service_status() {
-    log_purple "检查Docker服务状态..."
-
-    if ! command_exists docker; then
-        log_error "Docker 未安装"
-        return 1
-    fi
-
-    echo
-    log_info "运行中的容器："
-    docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || {
-        log_error "无法获取容器状态，请检查Docker服务"
-        return 1
-    }
-
-    echo
-    log_info "Docker网络："
-    docker network ls --format "table {{.Name}}\t{{.Driver}}\t{{.Scope}}"
-
-    echo
-    log_info "磁盘使用情况："
-    docker system df 2>/dev/null || log_warn "无法获取磁盘使用情况"
-}
-
-# 清理Docker资源
-cleanup_docker() {
-    log_purple "清理Docker资源..."
-
-    if confirm_action "是否清理未使用的Docker镜像和容器？"; then
-        log_info "清理未使用的容器..."
-        docker container prune -f
-
-        log_info "清理未使用的镜像..."
-        docker image prune -f
-
-        log_info "清理未使用的网络..."
-        docker network prune -f
-
-        log_info "清理未使用的卷..."
-        docker volume prune -f
-
-        log_info "✓ Docker资源清理完成"
-    fi
-}
-
 # 常用软件安装菜单
 install_common_services() {
     while true; do
@@ -1444,16 +1398,12 @@ install_common_services() {
         echo "  9.  安装 Nginx"
         echo "  10. 安装 MinIO"
         echo
-        echo "🛠️  系统管理:"
-        echo "  11. 查看服务状态"
-        echo "  12. 清理Docker资源"
-        echo
         echo "  0.  退出脚本"
         echo "================================================================"
         echo
 
         local choice
-        read -rp "请选择要执行的操作 [0-12]: " choice
+        read -rp "请选择要执行的操作 [0-10]: " choice
 
         case $choice in
             1) install_redis_service ;;
@@ -1466,20 +1416,16 @@ install_common_services() {
             8) install_elk_stack ;;
             9) install_nginx_service ;;
             10) install_minio_service ;;
-            11) show_service_status ;;
-            12) cleanup_docker ;;
             0)
                 log_info "感谢使用服务安装脚本，再见！"
                 exit 0
                 ;;
-            *) log_error "无效选择，请输入 0-12 之间的数字" ;;
+            *) log_error "无效选择，请输入 0-10 之间的数字" ;;
         esac
 
         echo
-        if [[ $choice != "11" && $choice != "12" ]]; then
-            log_info "按任意键继续..."
-            read -r
-        fi
+        log_info "按任意键继续..."
+        read -r
     done
 }
 
