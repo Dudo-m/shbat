@@ -73,10 +73,47 @@ confirm_action() {
     fi
 }
 
+# 获取本机IP地址
+get_local_ip() {
+    local ip=""
+    # 尝试多种方式获取本机IP
+    if command -v ip >/dev/null 2>&1; then
+        # Linux环境使用ip命令
+        ip=$(ip route get 8.8.8.8 2>/dev/null | awk '{print $7; exit}' 2>/dev/null)
+    elif command -v ifconfig >/dev/null 2>&1; then
+        # 使用ifconfig命令
+        ip=$(ifconfig | grep -E '192\.|10\.|172\.' | grep -v '127.0.0.1' | awk '{print $2}' | head -1 2>/dev/null)
+    elif command -v hostname >/dev/null 2>&1; then
+        # 使用hostname命令
+        ip=$(hostname -I 2>/dev/null | awk '{print $1}' 2>/dev/null)
+    fi
+    
+    # 如果上述方法都失败，尝试使用PowerShell (Windows环境)
+    if [[ -z "$ip" ]] && command -v powershell.exe >/dev/null 2>&1; then
+        ip=$(powershell.exe -Command "(Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'Wi-Fi','以太网*','Ethernet*' | Where-Object {\$_.IPAddress -notlike '169.254.*' -and \$_.IPAddress -ne '127.0.0.1'} | Select-Object -First 1).IPAddress" 2>/dev/null | tr -d '\r')
+    fi
+    
+    # 如果仍然没有获取到IP，返回localhost
+    if [[ -z "$ip" || "$ip" == "127.0.0.1" ]]; then
+        echo "localhost"
+    else
+        echo "$ip"
+    fi
+}
+
 # 生成随机密码
 generate_password() {
     local length="${1:-12}"
-    openssl rand -base64 "$length" 2>/dev/null || tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "$length"
+    if command -v openssl >/dev/null 2>&1; then
+        # 优先使用openssl，但是使用hex格式避免特殊字符
+        openssl rand -hex $((length/2)) 2>/dev/null || openssl rand -base64 "$length" 2>/dev/null | tr -d '/+=' | head -c "$length"
+    elif [[ -e /dev/urandom ]]; then
+        # 使用/dev/urandom生成只包含字母数字的密码
+        tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "$length" 2>/dev/null || echo "password123"
+    else
+        # 备用方案：使用时间戳生成简单密码
+        echo "pass$(date +%s | tail -c 8)"
+    fi
 }
 
 # 检查端口是否被占用
@@ -386,12 +423,14 @@ EOF
 
     # 启动服务
     if start_service "MySQL" "$install_dir" "$container_name"; then
+        local local_ip
+        local_ip=$(get_local_ip)
         log_info "配置信息："
         log_info "  容器名称: ${container_name}"
         log_info "  端口映射: ${port}:3306"
         log_info "  数据目录: $(realpath $install_dir)/data"
         log_info "  root 密码: ${mysql_root_password}"
-        log_info "  连接命令: mysql -h localhost -P ${port} -u root -p"
+        log_info "  连接命令: mysql -h ${local_ip} -P ${port} -u root -p"
 
         if [[ -n "$mysql_database" ]]; then
             log_info "  创建数据库: ${mysql_database}"
@@ -480,13 +519,15 @@ EOF
 
     # 启动服务
     if start_service "PostgreSQL" "$install_dir" "$container_name"; then
+        local local_ip
+        local_ip=$(get_local_ip)
         log_info "配置信息："
         log_info "  容器名称: ${container_name}"
         log_info "  端口映射: ${port}:5432"
         log_info "  数据目录: $(realpath $install_dir)/data"
         log_info "  用户名: postgres"
         log_info "  密码: ${postgres_password}"
-        log_info "  连接命令: psql -h localhost -p ${port} -U postgres"
+        log_info "  连接命令: psql -h ${local_ip} -p ${port} -U postgres"
 
         if [[ -n "$postgres_database" ]]; then
             log_info "  创建数据库: ${postgres_database}"
@@ -643,13 +684,15 @@ EOF
 
     # 启动服务
     if start_service "Nginx" "$install_dir" "$container_name"; then
+        local local_ip
+        local_ip=$(get_local_ip)
         log_info "配置信息："
         log_info "  容器名称: ${container_name}"
         log_info "  HTTP 端口: ${http_port}:80"
         log_info "  HTTPS 端口: ${https_port}:443"
         log_info "  配置目录: $(realpath $install_dir)/conf.d"
         log_info "  网站目录: $(realpath $install_dir)/html"
-        log_info "  访问地址: http://localhost:${http_port}"
+        log_info "  访问地址: http://${local_ip}:${http_port}"
         log_info "  配置测试: docker exec ${container_name} nginx -t"
     fi
 }
@@ -751,6 +794,8 @@ EOF
 
     # 启动服务
     if start_service "Elasticsearch" "$install_dir" "$container_name"; then
+        local local_ip
+        local_ip=$(get_local_ip)
         log_info "配置信息："
         log_info "  容器名称: ${container_name}"
         log_info "  HTTP 端口: ${port}:9200"
@@ -758,8 +803,8 @@ EOF
         log_info "  集群名称: ${cluster_name}"
         log_info "  堆内存: ${heap_size}"
         log_info "  数据目录: $(realpath $install_dir)/data"
-        log_info "  健康检查: curl http://localhost:${port}/_cluster/health"
-        log_info "  访问地址: http://localhost:${port}"
+        log_info "  健康检查: curl http://${local_ip}:${port}/_cluster/health"
+        log_info "  访问地址: http://${local_ip}:${port}"
     fi
 }
 
@@ -796,6 +841,9 @@ install_kibana_service() {
 
     # 创建安装目录
     mkdir -p "$install_dir"/{config,data}
+
+    # 设置权限 - 确保Docker容器内的kibana用户能够写入UUID文件
+    chmod 777 "$install_dir/data"
 
     # 生成Kibana配置文件
     cat > "$install_dir/config/kibana.yml" <<EOF
@@ -839,12 +887,14 @@ EOF
 
     # 启动服务
     if start_service "Kibana" "$install_dir" "$container_name"; then
+        local local_ip
+        local_ip=$(get_local_ip)
         log_info "配置信息："
         log_info "  容器名称: ${container_name}"
         log_info "  端口映射: ${port}:5601"
         log_info "  Elasticsearch: ${es_hosts}"
         log_info "  配置文件: $(realpath $install_dir)/config/kibana.yml"
-        log_info "  访问地址: http://localhost:${port}"
+        log_info "  访问地址: http://${local_ip}:${port}"
         log_warn "注意: 请确保 Elasticsearch 服务已启动并可访问"
     fi
 }
@@ -879,7 +929,17 @@ install_neo4j_service() {
     local neo4j_password=""
     read -rp "Neo4j 密码 (留空自动生成): " neo4j_password
     if [[ -z "$neo4j_password" ]]; then
-        neo4j_password="$(generate_password 16)"
+        # 生成只包含字母数字的密码，避免特殊字符导致NEO4J_AUTH解析错误
+        if command -v openssl >/dev/null 2>&1; then
+            # 使用openssl生成随机字符串，然后过滤掉特殊字符
+            neo4j_password="$(openssl rand -hex 8)"
+        elif [[ -e /dev/urandom ]]; then
+            # 使用/dev/urandom生成
+            neo4j_password="$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16 2>/dev/null || echo "neo4jpass123")"
+        else
+            # 备用方案：使用时间戳生成简单密码
+            neo4j_password="neo4j$(date +%s | tail -c 6)"
+        fi
         log_info "已生成随机密码: ${neo4j_password}"
     fi
 
@@ -931,6 +991,8 @@ EOF
 
     # 启动服务
     if start_service "Neo4j" "$install_dir" "$container_name"; then
+        local local_ip
+        local_ip=$(get_local_ip)
         log_info "配置信息："
         log_info "  容器名称: ${container_name}"
         log_info "  HTTP 端口: ${http_port}:7474"
@@ -938,8 +1000,8 @@ EOF
         log_info "  用户名: neo4j"
         log_info "  密码: ${neo4j_password}"
         log_info "  数据目录: $(realpath $install_dir)/data"
-        log_info "  Web界面: http://localhost:${http_port}"
-        log_info "  连接字符串: bolt://localhost:${bolt_port}"
+        log_info "  Web界面: http://${local_ip}:${http_port}"
+        log_info "  连接字符串: bolt://${local_ip}:${bolt_port}"
     fi
 }
 
@@ -1110,6 +1172,8 @@ EOF
 
     # 启动服务
     if start_service "ClickHouse" "$install_dir" "$container_name"; then
+        local local_ip
+        local_ip=$(get_local_ip)
         log_info "配置信息："
         log_info "  容器名称: ${container_name}"
         log_info "  HTTP 端口: ${http_port}:8123"
@@ -1120,12 +1184,12 @@ EOF
 
         if [[ -n "$clickhouse_password" ]]; then
             log_info "  密码: ${clickhouse_password}"
-            log_info "  连接命令: clickhouse-client --host localhost --port ${native_port} --user default --password ${clickhouse_password}"
+            log_info "  连接命令: clickhouse-client --host ${local_ip} --port ${native_port} --user default --password ${clickhouse_password}"
         else
-            log_info "  连接命令: clickhouse-client --host localhost --port ${native_port}"
+            log_info "  连接命令: clickhouse-client --host ${local_ip} --port ${native_port}"
         fi
 
-        log_info "  Web界面: http://localhost:${http_port}/play"
+        log_info "  Web界面: http://${local_ip}:${http_port}/play"
         log_info "  数据目录: $(realpath $install_dir)/data"
     fi
 }
@@ -1218,6 +1282,8 @@ EOF
 
     # 启动服务
     if start_service "MinIO" "$install_dir" "$container_name"; then
+        local local_ip
+        local_ip=$(get_local_ip)
         log_info "配置信息："
         log_info "  容器名称: ${container_name}"
         log_info "  API 端口: ${api_port}:9000"
@@ -1225,8 +1291,8 @@ EOF
         log_info "  Root 用户: ${root_user}"
         log_info "  Root 密码: ${root_password}"
         log_info "  数据目录: $(realpath $install_dir)/data"
-        log_info "  API 地址: http://localhost:${api_port}"
-        log_info "  控制台: http://localhost:${console_port}"
+        log_info "  API 地址: http://${local_ip}:${api_port}"
+        log_info "  控制台: http://${local_ip}:${console_port}"
     fi
 }
 
@@ -1260,6 +1326,7 @@ install_elk_stack() {
 
     # 设置权限
     chmod 777 "$install_dir/elasticsearch/data" "$install_dir/elasticsearch/logs"
+    chmod 777 "$install_dir/kibana/data"
 
     # 生成Elasticsearch配置
     cat > "$install_dir/elasticsearch/config/elasticsearch.yml" <<'EOF'
@@ -1347,15 +1414,17 @@ EOF
 
     # 启动服务
     if start_service "ELK Stack" "$install_dir" "elasticsearch"; then
+        local local_ip
+        local_ip=$(get_local_ip)
         log_info "ELK Stack 配置信息："
         log_info "  Elasticsearch:"
         log_info "    - 容器名: elasticsearch"
         log_info "    - HTTP 端口: ${es_port}:9200"
-        log_info "    - 访问地址: http://localhost:${es_port}"
+        log_info "    - 访问地址: http://${local_ip}:${es_port}"
         log_info "  Kibana:"
         log_info "    - 容器名: kibana"
         log_info "    - 端口: ${kibana_port}:5601"
-        log_info "    - 访问地址: http://localhost:${kibana_port}"
+        log_info "    - 访问地址: http://${local_ip}:${kibana_port}"
         log_info "  数据目录: $(realpath $install_dir)"
     fi
 }
