@@ -27,3 +27,31 @@ bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master
 ```
 bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker_services.sh)
 ```
+
+### 邮件服务安装脚本 (email.sh)
+
+#### github
+
+```
+bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/email.sh)
+```
+
+#### gitee
+
+```
+bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/email.sh)
+```
+
+### VPN 服务安装脚本 (vpn.sh)
+
+#### github
+
+```
+bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/vpn.sh)
+```
+
+#### gitee
+
+```
+bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn.sh)
+```
