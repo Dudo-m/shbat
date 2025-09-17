@@ -3,8 +3,6 @@
 # CentOS VPN 服务安装脚本
 # 支持: PPTP, L2TP/IPsec, OpenVPN
 
-set -euo pipefail
-
 # 检查是否为root用户
 if [ "$(id -u)" != "0" ]; then
    echo "请以root用户运行此脚本。"
@@ -143,11 +141,20 @@ EOF
 # L2TP/IPsec 安装
 install_l2tp() {
     echo "正在安装 L2TP/IPsec VPN 服务..."
-    
-    # 禁用SELinux
-    setenforce 0 2>/dev/null
-    sed -i 's/^SELINUX=.*/SELINUX=disabled/' /etc/selinux/config 2>/dev/null
 
+    # 检查TUN/TAP支持
+    if [ ! -e /dev/net/tun ]; then
+        echo "错误: 系统不支持TUN/TAP，无法安装L2TP VPN"
+        return 1
+    fi
+
+    # 禁用SELinux (如果存在)
+    if command -v setenforce >/dev/null 2>&1; then
+        setenforce 0 2>/dev/null
+        sed -i 's/^SELINUX=.*/SELINUX=disabled/' /etc/selinux/config 2>/dev/null
+    fi
+
+    # 获取用户配置
     read -p "请输入IP地址池前缀 (默认: 192.168.18): " iprange
     iprange=${iprange:-192.168.18}
 
@@ -164,18 +171,32 @@ install_l2tp() {
         l2tp_password=$(openssl rand -base64 12)
     fi
 
-    yum install -y gcc make flex bison ppp iptables libnss3-dev libnspr4-dev \
-                   libcap-ng-dev libevent-dev libcurl-devel unbound-devel \
+    # 安装依赖
+    yum install -y epel-release
+    yum install -y gcc make flex bison ppp iptables libnss3-devel libnspr4-devel \
+                   libcap-ng-devel libevent-devel libcurl-devel unbound-devel \
                    xmlto libunbound-devel curl wget xl2tpd
 
-    # 安装Libreswan
-    cd /tmp
-    LIBRESWAN_VER="4.12"
-    wget -O libreswan.tar.gz "https://github.com/libreswan/libreswan/archive/v${LIBRESWAN_VER}.tar.gz"
-    tar xzf libreswan.tar.gz
-    cd "libreswan-${LIBRESWAN_VER}"
+    # 尝试直接安装libreswan，如果失败则从源码编译
+    if ! yum install -y libreswan; then
+        echo "通过yum安装libreswan失败，尝试从源码编译..."
+        
+        # 安装编译依赖
+        yum install -y nspr-devel nss-devel gmp-devel flex bison
 
-    cat > Makefile.inc.local << EOF
+        # 下载并编译Libreswan
+        cd /tmp
+        LIBRESWAN_VER=$(curl -s https://api.github.com/repos/libreswan/libreswan/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | sed 's/^v//')
+        if [ -z "$LIBRESWAN_VER" ]; then
+            LIBRESWAN_VER="4.12"
+        fi
+
+        wget -O libreswan.tar.gz "https://github.com/libreswan/libreswan/archive/v${LIBRESWAN_VER}.tar.gz"
+        tar xzf libreswan.tar.gz
+        cd "libreswan-${LIBRESWAN_VER}"
+
+        # 配置编译选项
+        cat > Makefile.inc.local << EOF
 WERROR_CFLAGS =
 USE_DNSSEC = false
 USE_DH31 = false
@@ -184,8 +205,15 @@ USE_NSS_IPSEC_PROFILE = false
 USE_GLIBC_KERN_FLIP_HEADERS = true
 EOF
 
-    make programs && make install
-    systemctl enable ipsec xl2tpd
+        # 编译安装并检查是否成功
+        if ! make programs && make install; then
+            echo "Libreswan编译安装失败，请检查系统环境或网络连接。"
+            return 1
+        fi
+    fi
+    
+    systemctl enable ipsec
+    systemctl enable xl2tpd
 
     # 配置IPsec
     cat > /etc/ipsec.conf << EOF
@@ -224,6 +252,7 @@ EOF
     cat > /etc/ipsec.secrets << EOF
 %any %any : PSK "${mypsk}"
 EOF
+
     chmod 600 /etc/ipsec.secrets
 
     # 配置xl2tpd
@@ -261,9 +290,10 @@ proxyarp
 connect-delay 5000
 EOF
 
+    # 添加用户
     echo "${l2tp_user} l2tpd ${l2tp_password} *" >> /etc/ppp/chap-secrets
 
-    # 配置系统网络设置
+    # 配置系统网络设置 (基于Teddysun脚本的完整配置)
     cat >> /etc/sysctl.conf << EOF
 net.ipv4.ip_forward = 1
 net.ipv4.conf.all.send_redirects = 0
@@ -280,34 +310,100 @@ EOF
 
     sysctl -p
 
-    configure_firewall "l2tp"
-    systemctl restart ipsec xl2tpd
+    # 启动服务
+    systemctl restart ipsec
+    systemctl restart xl2tpd
 
+    # 配置防火墙
+    configure_firewall "l2tp"
+
+    # 验证安装
+    echo "正在验证L2TP/IPsec安装..."
+    if command -v ipsec >/dev/null 2>&1; then
+        ipsec verify
+    fi
+
+    echo ""
+    echo "=========================================="
     echo "L2TP/IPsec VPN 服务安装完成！"
-    echo "服务器IP: $(curl -s ipinfo.io/ip)"
+    echo "=========================================="
+    echo "服务器IP: $(curl -s ipinfo.io/ip || curl -s icanhazip.com || hostname -I | awk '{print $1}')"
     echo "预共享密钥(PSK): ${mypsk}"
     echo "用户名: ${l2tp_user}"
     echo "密码: ${l2tp_password}"
+    echo "IP地址池: ${iprange}.2-${iprange}.254"
+    echo ""
+    echo "请在客户端配置L2TP/IPsec连接时使用以上信息。"
+    echo "=========================================="
 }
 
 # OpenVPN 安装
 install_openvpn() {
     echo "正在安装 OpenVPN 服务..."
     yum install -y openvpn easy-rsa
-    
     mkdir -p /etc/openvpn/easy-rsa/keys
-    cp -r /usr/share/easy-rsa/* /etc/openvpn/easy-rsa/
+    # 查找easy-rsa实际安装路径
+    EASYRSA_PATH=$(find /usr/share -name "easyrsa" -type f 2>/dev/null | head -1)
+    if [ -n "$EASYRSA_PATH" ]; then
+        EASYRSA_DIR=$(dirname "$EASYRSA_PATH")
+        cp -r "$EASYRSA_DIR"/* /etc/openvpn/easy-rsa/
+    else
+        # 尝试复制整个easy-rsa目录
+        if [ -d "/usr/share/easy-rsa" ]; then
+            cp -r /usr/share/easy-rsa/* /etc/openvpn/easy-rsa/
+        fi
+    fi
+
     cd /etc/openvpn/easy-rsa/
 
-    ./easyrsa init-pki
-    echo "" | ./easyrsa build-ca nopass
-    echo "" | ./easyrsa gen-req server nopass
-    echo "yes" | ./easyrsa sign-req server server
-    ./easyrsa gen-dh
-    openvpn --genkey --secret ta.key
+    # 查找easyrsa可执行文件
+    if [ ! -f "./easyrsa" ]; then
+        # 尝试从系统路径找到easyrsa
+        EASYRSA_BIN=$(which easyrsa 2>/dev/null || find /usr -name "easyrsa" -type f 2>/dev/null | head -1)
+        if [ -n "$EASYRSA_BIN" ]; then
+            ln -sf "$EASYRSA_BIN" ./easyrsa
+        else
+            echo "错误: 找不到easyrsa可执行文件"
+            return 1
+        fi
+    fi
 
-    cp pki/ca.crt pki/issued/server.crt pki/private/server.key ta.key pki/dh.pem /etc/openvpn/
+    # 检查easyrsa是否已在指定目录
+    if [ ! -d "pki" ]; then
+        ./easyrsa init-pki
+    fi
 
+    # 如果没有CA，则创建
+    if [ ! -f "pki/ca.crt" ]; then
+        echo "请确认证书信息，回车继续..."
+        echo "" | ./easyrsa build-ca nopass
+    fi
+
+    # 生成服务器证书和密钥
+    if [ ! -f "pki/issued/server.crt" ]; then
+        echo "" | ./easyrsa gen-req server nopass
+        echo "yes" | ./easyrsa sign-req server server
+    fi
+
+    # 生成DH参数
+    if [ ! -f "pki/dh.pem" ]; then
+        ./easyrsa gen-dh
+    fi
+
+    # 生成ta.key (HMAC防火墙)
+    if [ ! -f "ta.key" ]; then
+        openvpn --genkey --secret ta.key
+    fi
+
+    # 移动文件到OpenVPN目录
+    if [ -f "pki/ca.crt" ] && [ -f "pki/issued/server.crt" ] && [ -f "pki/private/server.key" ] && [ -f "ta.key" ] && [ -f "pki/dh.pem" ]; then
+        cp pki/ca.crt pki/issued/server.crt pki/private/server.key ta.key pki/dh.pem /etc/openvpn/
+    else
+        echo "错误: 证书文件生成失败，请检查上述错误信息"
+        return 1
+    fi
+
+    # 创建OpenVPN服务器配置文件
     cat > /etc/openvpn/server.conf << EOF
 port 1194
 proto udp
@@ -340,10 +436,22 @@ EOF
     systemctl enable openvpn@server
     systemctl start openvpn@server
 
+    # 检查服务状态
+    if ! systemctl is-active --quiet openvpn@server; then
+        echo "警告: OpenVPN服务启动失败，请检查配置"
+        echo "运行以下命令查看详细错误:"
+        echo "systemctl status openvpn@server"
+        echo "journalctl -u openvpn@server"
+    fi
+
     configure_firewall "openvpn"
 
     echo "OpenVPN 服务安装完成！"
-    generate_openvpn_client
+    echo "下一步是生成客户端配置文件。"
+    read -p "是否现在生成OpenVPN客户端配置文件？(y/n): " gen_client
+    if [[ "$gen_client" == "y" || "$gen_client" == "Y" ]]; then
+        generate_openvpn_client
+    fi
 }
 
 # 生成OpenVPN客户端配置
@@ -411,22 +519,108 @@ uninstall_pptp() {
 }
 
 uninstall_l2tp() {
+    echo "正在卸载 L2TP/IPsec VPN 服务..."
     systemctl stop xl2tpd ipsec
     systemctl disable xl2tpd ipsec
     yum remove -y libreswan xl2tpd
-    rm -f /etc/ipsec.conf /etc/ipsec.secrets /etc/xl2tpd/xl2tpd.conf /etc/ppp/options.xl2tpd
-    sed -i "/ l2tpd /d" /etc/ppp/chap-secrets
+    rm -f /etc/ipsec.conf
+    rm -f /etc/ipsec.secrets
+    rm -f /etc/xl2tpd/xl2tpd.conf
+    rm -f /etc/ppp/options.xl2tpd
+    sed -i "/ l2tpd /d" /etc/ppp/chap-secrets # 移除所有L2TP用户
+    # 清理sysctl配置
+    sed -i '/net.ipv4.ip_forward = 1/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.all.send_redirects = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.default.send_redirects = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.all.accept_redirects = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.default.accept_redirects = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.all.accept_source_route = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.default.accept_source_route = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.all.rp_filter = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.default.rp_filter = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.lo.rp_filter = 0/d' /etc/sysctl.conf
+    sed -i "/net.ipv4.conf.${MAIN_INTERFACE}.rp_filter = 0/d" /etc/sysctl.conf
+    sysctl -p
     configure_firewall "l2tp" "remove"
     echo "L2TP/IPsec VPN 服务已卸载。"
 }
 
 uninstall_openvpn() {
+    echo "正在卸载 OpenVPN 服务..."
     systemctl stop openvpn@server
     systemctl disable openvpn@server
     yum remove -y openvpn easy-rsa
     rm -rf /etc/openvpn/*
+    # 移除sysctl转发配置
+    sed -i '/net.ipv4.ip_forward = 1/d' /etc/sysctl.conf
+    sysctl -p
     configure_firewall "openvpn" "remove"
     echo "OpenVPN 服务已卸载。"
+}
+
+# L2TP用户管理函数
+manage_l2tp_users() {
+    echo "----------------------------------------"
+    echo "       L2TP 用户管理"
+    echo "----------------------------------------"
+    echo "1. 列出所有用户"
+    echo "2. 添加用户"
+    echo "3. 删除用户"
+    echo "4. 修改用户密码"
+    echo "0. 返回主菜单"
+    echo "----------------------------------------"
+
+    read -p "请选择操作: " user_option
+
+    case $user_option in
+        1)
+            echo "当前L2TP用户列表:"
+            echo "----------------------------------------"
+            if [ -f /etc/ppp/chap-secrets ]; then
+                grep " l2tpd " /etc/ppp/chap-secrets | awk '{print "用户名: " $1 "  密码: " $3}'
+            else
+                echo "未找到用户配置文件"
+            fi
+            ;;
+        2)
+            read -p "请输入新用户名: " new_user
+            read -p "请输入新密码: " new_pass
+            if [ -n "$new_user" ] && [ -n "$new_pass" ]; then
+                echo "$new_user l2tpd $new_pass *" >> /etc/ppp/chap-secrets
+                echo "用户 $new_user 添加成功"
+            else
+                echo "用户名和密码不能为空"
+            fi
+            ;;
+        3)
+            read -p "请输入要删除的用户名: " del_user
+            if [ -n "$del_user" ]; then
+                sed -i "/^$del_user l2tpd /d" /etc/ppp/chap-secrets
+                echo "用户 $del_user 删除成功"
+            else
+                echo "用户名不能为空"
+            fi
+            ;;
+        4)
+            read -p "请输入要修改密码的用户名: " mod_user
+            read -p "请输入新密码: " mod_pass
+            if [ -n "$mod_user" ] && [ -n "$mod_pass" ]; then
+                sed -i "/^$mod_user l2tpd /c\\$mod_user l2tpd $mod_pass *" /etc/ppp/chap-secrets
+                echo "用户 $mod_user 密码修改成功"
+            else
+                echo "用户名和密码不能为空"
+            fi
+            ;;
+        0)
+            return
+            ;;
+        *)
+            echo "无效选项"
+            ;;
+    esac
+
+    read -p "按任意键继续..."
+    manage_l2tp_users
 }
 
 # 主菜单
@@ -441,9 +635,10 @@ main_menu() {
     echo "2. 卸载 PPTP VPN"
     echo "3. 安装 L2TP/IPsec VPN"
     echo "4. 卸载 L2TP/IPsec VPN"
-    echo "5. 安装 OpenVPN"
-    echo "6. 卸载 OpenVPN"
-    echo "7. 生成 OpenVPN 客户端配置"
+    echo "5. L2TP 用户管理"
+    echo "6. 安装 OpenVPN"
+    echo "7. 卸载 OpenVPN"
+    echo "8. 生成 OpenVPN 客户端配置"
     echo "0. 退出"
     echo "----------------------------------------"
 
@@ -454,9 +649,10 @@ main_menu() {
         2) uninstall_pptp ;;
         3) install_l2tp ;;
         4) uninstall_l2tp ;;
-        5) install_openvpn ;;
-        6) uninstall_openvpn ;;
-        7) generate_openvpn_client ;;
+        5) manage_l2tp_users ;;
+        6) install_openvpn ;;
+        7) uninstall_openvpn ;;
+        8) generate_openvpn_client ;;
         0) echo "脚本已退出。"; exit 0 ;;
         *) echo "无效的选项，请重新选择。"; sleep 2; main_menu ;;
     esac
