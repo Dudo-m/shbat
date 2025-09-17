@@ -18,7 +18,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master
 
 #### 常用服务安装
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker/docker_services.sh)
+curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker/docker_services.sh | bash
 ```
 
 #### VPN 服务搭建

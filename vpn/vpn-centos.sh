@@ -122,6 +122,12 @@ EOF
     echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
     sysctl -p
 
+    # 加载GRE模块 - 关键修复
+    echo "modprobe nf_conntrack_pptp" >> /etc/rc.local
+    echo "modprobe nf_nat_pptp" >> /etc/rc.local
+    modprobe nf_conntrack_pptp 2>/dev/null
+    modprobe nf_nat_pptp 2>/dev/null
+
     configure_firewall "pptp"
     systemctl restart pptpd
 

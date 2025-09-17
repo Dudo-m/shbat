@@ -25,7 +25,7 @@ bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker-ubun
 
 **Gitee:**
 ```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker_services.sh)
+curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker_services.sh | bash
 ```
 
 ### 📧 邮件服务脚本
@@ -97,7 +97,7 @@ bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker-ubun
 
 ### 常用服务部署
 ```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker_services.sh)
+curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker_services.sh | bash
 ```
 
 ### VPN 服务搭建
