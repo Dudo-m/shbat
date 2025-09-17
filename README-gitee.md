@@ -84,26 +84,31 @@ shbat/
 ## 🚀 快速开始
 
 ### Docker 环境搭建
-```bash
-# CentOS/RHEL/Fedora 系统
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker-centos.sh)
 
-# Ubuntu/Debian 系统  
+**CentOS/RHEL/Fedora 系统:**
+```bash
+bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker-centos.sh)
+```
+
+**Ubuntu/Debian 系统:**
+```bash
 bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker-ubuntu.sh)
 ```
 
 ### 常用服务部署
 ```bash
-# 安装 Redis、MySQL、PostgreSQL 等服务
 bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker_services.sh)
 ```
 
 ### VPN 服务搭建
-```bash
-# CentOS 系统
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-centos.sh)
 
-# Ubuntu 系统
+**CentOS 系统:**
+```bash
+bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-centos.sh)
+```
+
+**Ubuntu 系统:**
+```bash
 bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-ubuntu.sh)
 ```
 

@@ -5,32 +5,36 @@
 ### 🚀 快速开始
 
 #### Docker 环境搭建
-```bash
-# CentOS/RHEL/Fedora 系统
-bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker/docker-centos.sh)
 
-# Ubuntu/Debian 系统
+**CentOS/RHEL/Fedora 系统:**
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker/docker-centos.sh)
+```
+
+**Ubuntu/Debian 系统:**
+```bash
 bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker/docker-ubuntu.sh)
 ```
 
 #### 常用服务安装
 ```bash
-# 一键安装 Redis、MySQL、PostgreSQL、Nginx、Elasticsearch 等服务
 bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker/docker_services.sh)
 ```
 
 #### VPN 服务搭建
-```bash
-# CentOS/RHEL/Fedora 系统
-bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/vpn/vpn-centos.sh)
 
-# Ubuntu/Debian 系统
+**CentOS/RHEL/Fedora 系统:**
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/vpn/vpn-centos.sh)
+```
+
+**Ubuntu/Debian 系统:**
+```bash
 bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/vpn/vpn-ubuntu.sh)
 ```
 
 #### 邮件服务器
 ```bash
-# CentOS 邮件服务器 (Postfix + Dovecot)
 bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/email/email-centos.sh)
 ```
 
