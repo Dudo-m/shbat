@@ -1,276 +1,105 @@
 #!/bin/bash
 
+# CentOS VPN 服务安装脚本
+# 支持: PPTP, L2TP/IPsec, OpenVPN
+
 # 检查是否为root用户
 if [ "$(id -u)" != "0" ]; then
    echo "请以root用户运行此脚本。"
-   exit 1fore
+   exit 1
 fi
 
 # 检查系统类型
-if grep -Eqi "centos" /etc/issue || grep -Eqi "centos" /etc/*release; then
-    release="centos"
-elif grep -Eqi "ubuntu" /etc/issue || grep -Eqi "ubuntu" /etc/*release; then
-    release="ubuntu"
-else
-    echo "不支持的操作系统，本脚本仅支持 CentOS 和 Ubuntu。"
+if ! grep -Eqi "centos|rhel|fedora" /etc/os-release; then
+    echo "此脚本仅支持 CentOS/RHEL/Fedora 系统。"
     exit 1
 fi
 
-# 尝试自动检测主网络接口
+# 获取主网络接口
 MAIN_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n 1)
 if [ -z "$MAIN_INTERFACE" ]; then
-    echo "警告: 无法自动检测主网络接口，OpenVPN的NAT配置可能需要手动调整。"
-    MAIN_INTERFACE="eth0" # 默认值，可能需要根据实际情况修改
+    MAIN_INTERFACE="eth0"
 fi
 echo "检测到的主网络接口: $MAIN_INTERFACE"
-
-# 检测防火墙类型
-detect_firewall() {
-    if systemctl is-active --quiet firewalld; then
-        FIREWALL_TYPE="firewalld"
-    elif systemctl is-active --quiet ufw; then
-        FIREWALL_TYPE="ufw"
-    elif command -v iptables >/dev/null 2>&1; then
-        FIREWALL_TYPE="iptables"
-    else
-        FIREWALL_TYPE="none"
-    fi
-    echo "检测到防火墙类型: $FIREWALL_TYPE"
-}
 
 # 安装依赖
 install_dependencies() {
     echo "正在安装依赖..."
-    if [ "$release" == "centos" ]; then
-        yum install -y epel-release
-        yum install -y psmisc net-tools curl iptables-services
-        # 尝试启动firewalld，如果失败则使用iptables
-        if ! systemctl enable firewalld 2>/dev/null || ! systemctl start firewalld 2>/dev/null; then
-            echo "firewalld启动失败，使用iptables"
-            systemctl enable iptables
-            systemctl start iptables
-        fi
-    elif [ "$release" == "ubuntu" ]; then
-        apt update
-        apt install -y psmisc net-tools curl ufw iptables-persistent
-        if ! systemctl enable ufw 2>/dev/null || ! systemctl start ufw 2>/dev/null; then
-            echo "ufw启动失败，将使用iptables"
-        else
-            ufw --force enable # 确保ufw已启用
-        fi
-    fi
-    detect_firewall
+    yum install -y epel-release
+    yum install -y psmisc net-tools curl iptables-services firewalld
+    systemctl enable firewalld
+    systemctl start firewalld
     echo "依赖安装完成。"
 }
 
-# 配置防火墙 (添加规则)
-configure_firewall_add() {
+# 配置防火墙
+configure_firewall() {
     local service_type=$1
-    echo "正在配置防火墙添加规则用于 $service_type..."
+    local action=${2:-add}
 
-    case "$FIREWALL_TYPE" in
-        "firewalld")
-            firewall-cmd --zone=public --add-masquerade --permanent
-            if [ "$service_type" == "pptp" ]; then
+    echo "正在配置防火墙 ($action) 用于 $service_type..."
+
+    if [ "$action" == "add" ]; then
+        firewall-cmd --zone=public --add-masquerade --permanent
+        case "$service_type" in
+            "pptp")
                 firewall-cmd --permanent --add-port=1723/tcp
                 firewall-cmd --permanent --add-protocol=gre
-                # 添加PPTP转发规则
                 firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -i ppp+ -j ACCEPT
                 firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -o ppp+ -j ACCEPT
                 firewall-cmd --permanent --direct --add-rule ipv4 nat POSTROUTING 0 -s 192.168.0.0/24 -o "$MAIN_INTERFACE" -j MASQUERADE
-            elif [ "$service_type" == "l2tp" ]; then
+                ;;
+            "l2tp")
                 firewall-cmd --permanent --add-port=500/udp
                 firewall-cmd --permanent --add-port=4500/udp
                 firewall-cmd --permanent --add-port=1701/udp
-                firewall-cmd --permanent --add-service=ipsec 2>/dev/null || firewall-cmd --permanent --add-port=4500/udp
-            elif [ "$service_type" == "openvpn" ]; then
+                ;;
+            "openvpn")
                 firewall-cmd --permanent --add-port=1194/udp
                 firewall-cmd --permanent --direct --add-rule ipv4 nat POSTROUTING 0 -s 10.8.0.0/24 -o "$MAIN_INTERFACE" -j MASQUERADE
                 firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -i tun+ -o "$MAIN_INTERFACE" -j ACCEPT
                 firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -i "$MAIN_INTERFACE" -o tun+ -j ACCEPT
-            fi
-            firewall-cmd --reload
-            ;;
-        "ufw")
-            ufw allow OpenSSH
-            ufw --force enable
-            if [ "$service_type" == "pptp" ]; then
-                ufw allow 1723/tcp
-                # 为PPTP添加NAT规则
-                if ! grep -q "*nat" /etc/ufw/before.rules; then
-                    cat >> /etc/ufw/before.rules << EOF
-
-*nat
-:POSTROUTING ACCEPT [0:0]
--A POSTROUTING -s 192.168.0.0/24 -o $MAIN_INTERFACE -j MASQUERADE
-COMMIT
-EOF
-                else
-                    sed -i "/^COMMIT$/i -A POSTROUTING -s 192.168.0.0/24 -o $MAIN_INTERFACE -j MASQUERADE" /etc/ufw/before.rules
-                fi
-                # 启用IP转发
-                cp /etc/default/ufw /etc/default/ufw.bak_pptp 2>/dev/null
-                sed -i 's/DEFAULT_FORWARD_POLICY="DROP"/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
-                ufw disable && ufw --force enable
-            elif [ "$service_type" == "l2tp" ]; then
-                ufw allow 500/udp
-                ufw allow 4500/udp
-                ufw allow 1701/udp
-            elif [ "$service_type" == "openvpn" ]; then
-                ufw allow 1194/udp
-                cp /etc/default/ufw /etc/default/ufw.bak_vpn_installer 2>/dev/null
-                cp /etc/ufw/before.rules /etc/ufw/before.rules.bak_vpn_installer 2>/dev/null
-                sed -i 's/DEFAULT_FORWARD_POLICY="DROP"/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
-                if ! grep -q "*nat" /etc/ufw/before.rules; then
-                    cat >> /etc/ufw/before.rules << EOF
-
-*nat
-:POSTROUTING ACCEPT [0:0]
--A POSTROUTING -s 10.8.0.0/24 -o $MAIN_INTERFACE -j MASQUERADE
-COMMIT
-EOF
-                else
-                    sed -i "/^COMMIT$/i -A POSTROUTING -s 10.8.0.0/24 -o $MAIN_INTERFACE -j MASQUERADE" /etc/ufw/before.rules
-                fi
-                ufw disable && ufw --force enable
-            fi
-            ;;
-        "iptables")
-            # 启用IP转发
-            echo 1 > /proc/sys/net/ipv4/ip_forward
-            echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
-
-            # 添加MASQUERADE规则
-            iptables -t nat -A POSTROUTING -o "$MAIN_INTERFACE" -j MASQUERADE
-
-            if [ "$service_type" == "pptp" ]; then
-                iptables -A INPUT -p tcp --dport 1723 -j ACCEPT
-                iptables -A INPUT -p gre -j ACCEPT
-                iptables -A FORWARD -i ppp+ -j ACCEPT
-                iptables -A FORWARD -o ppp+ -j ACCEPT
-            elif [ "$service_type" == "l2tp" ]; then
-                iptables -A INPUT -p udp --dport 500 -j ACCEPT
-                iptables -A INPUT -p udp --dport 4500 -j ACCEPT
-                iptables -A INPUT -p udp --dport 1701 -j ACCEPT
-                iptables -A INPUT -p esp -j ACCEPT
-                iptables -A FORWARD -i ppp+ -j ACCEPT
-                iptables -A FORWARD -o ppp+ -j ACCEPT
-            elif [ "$service_type" == "openvpn" ]; then
-                iptables -A INPUT -p udp --dport 1194 -j ACCEPT
-                iptables -A FORWARD -i tun+ -j ACCEPT
-                iptables -A FORWARD -o tun+ -j ACCEPT
-                iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o "$MAIN_INTERFACE" -j MASQUERADE
-            fi
-
-            # 保存iptables规则
-            if [ "$release" == "centos" ]; then
-                service iptables save 2>/dev/null || iptables-save > /etc/sysconfig/iptables
-            elif [ "$release" == "ubuntu" ]; then
-                iptables-save > /etc/iptables/rules.v4 2>/dev/null || netfilter-persistent save 2>/dev/null
-            fi
-            ;;
-        *)
-            echo "警告: 未检测到支持的防火墙，请手动配置防火墙规则"
-            ;;
-    esac
-    echo "防火墙规则配置完成。"
-}
-
-# 配置防火墙 (移除规则)
-configure_firewall_remove() {
-    local service_type=$1
-    echo "正在配置防火墙移除规则用于 $service_type..."
-
-    case "$FIREWALL_TYPE" in
-        "firewalld")
-            if [ "$service_type" == "pptp" ]; then
+                ;;
+        esac
+    else
+        case "$service_type" in
+            "pptp")
                 firewall-cmd --permanent --remove-port=1723/tcp
                 firewall-cmd --permanent --remove-protocol=gre
-            elif [ "$service_type" == "l2tp" ]; then
+                firewall-cmd --permanent --direct --remove-rule ipv4 filter FORWARD 0 -i ppp+ -j ACCEPT 2>/dev/null || true
+                firewall-cmd --permanent --direct --remove-rule ipv4 filter FORWARD 0 -o ppp+ -j ACCEPT 2>/dev/null || true
+                firewall-cmd --permanent --direct --remove-rule ipv4 nat POSTROUTING 0 -s 192.168.0.0/24 -o "$MAIN_INTERFACE" -j MASQUERADE 2>/dev/null || true
+                ;;
+            "l2tp")
                 firewall-cmd --permanent --remove-port=500/udp
                 firewall-cmd --permanent --remove-port=4500/udp
                 firewall-cmd --permanent --remove-port=1701/udp
-                firewall-cmd --permanent --remove-service=ipsec 2>/dev/null
-            elif [ "$service_type" == "openvpn" ]; then
+                ;;
+            "openvpn")
                 firewall-cmd --permanent --remove-port=1194/udp
                 firewall-cmd --permanent --direct --remove-rule ipv4 nat POSTROUTING 0 -s 10.8.0.0/24 -o "$MAIN_INTERFACE" -j MASQUERADE
                 firewall-cmd --permanent --direct --remove-rule ipv4 filter FORWARD 0 -i tun+ -o "$MAIN_INTERFACE" -j ACCEPT
                 firewall-cmd --permanent --direct --remove-rule ipv4 filter FORWARD 0 -i "$MAIN_INTERFACE" -o tun+ -j ACCEPT
-            fi
-            firewall-cmd --reload
-            ;;
-        "ufw")
-            if [ "$service_type" == "pptp" ]; then
-                ufw delete allow 1723/tcp
-            elif [ "$service_type" == "l2tp" ]; then
-                ufw delete allow 500/udp
-                ufw delete allow 4500/udp
-                ufw delete allow 1701/udp
-            elif [ "$service_type" == "openvpn" ]; then
-                ufw delete allow 1194/udp
-                if [ -f "/etc/default/ufw.bak_vpn_installer" ]; then
-                    mv /etc/default/ufw.bak_vpn_installer /etc/default/ufw
-                fi
-                if [ -f "/etc/ufw/before.rules.bak_vpn_installer" ]; then
-                    mv /etc/ufw/before.rules.bak_vpn_installer /etc/ufw/before.rules
-                else
-                    sed -i "/-A POSTROUTING -s 10.8.0.0\/24 -o $MAIN_INTERFACE -j MASQUERADE/d" /etc/ufw/before.rules
-                fi
-                ufw disable && ufw --force enable
-            fi
-            ;;
-        "iptables")
-            if [ "$service_type" == "pptp" ]; then
-                iptables -D INPUT -p tcp --dport 1723 -j ACCEPT 2>/dev/null
-                iptables -D INPUT -p gre -j ACCEPT 2>/dev/null
-                iptables -D FORWARD -i ppp+ -j ACCEPT 2>/dev/null
-                iptables -D FORWARD -o ppp+ -j ACCEPT 2>/dev/null
-            elif [ "$service_type" == "l2tp" ]; then
-                iptables -D INPUT -p udp --dport 500 -j ACCEPT 2>/dev/null
-                iptables -D INPUT -p udp --dport 4500 -j ACCEPT 2>/dev/null
-                iptables -D INPUT -p udp --dport 1701 -j ACCEPT 2>/dev/null
-                iptables -D INPUT -p esp -j ACCEPT 2>/dev/null
-                iptables -D FORWARD -i ppp+ -j ACCEPT 2>/dev/null
-                iptables -D FORWARD -o ppp+ -j ACCEPT 2>/dev/null
-            elif [ "$service_type" == "openvpn" ]; then
-                iptables -D INPUT -p udp --dport 1194 -j ACCEPT 2>/dev/null
-                iptables -D FORWARD -i tun+ -j ACCEPT 2>/dev/null
-                iptables -D FORWARD -o tun+ -j ACCEPT 2>/dev/null
-                iptables -t nat -D POSTROUTING -s 10.8.0.0/24 -o "$MAIN_INTERFACE" -j MASQUERADE 2>/dev/null
-            fi
-
-            # 保存iptables规则
-            if [ "$release" == "centos" ]; then
-                service iptables save 2>/dev/null || iptables-save > /etc/sysconfig/iptables
-            elif [ "$release" == "ubuntu" ]; then
-                iptables-save > /etc/iptables/rules.v4 2>/dev/null || netfilter-persistent save 2>/dev/null
-            fi
-            ;;
-        *)
-            echo "警告: 未检测到支持的防火墙，请手动移除防火墙规则"
-            ;;
-    esac
-    echo "防火墙规则已移除。"
+                ;;
+        esac
+    fi
+    firewall-cmd --reload
 }
 
-
-# PPTP 安装函数
+# PPTP 安装
 install_pptp() {
     echo "正在安装 PPTP VPN 服务..."
-    if [ "$release" == "centos" ]; then
-        yum install -y pptpd ppp
-        systemctl enable pptpd
+    yum install -y pptpd ppp
+    systemctl enable pptpd
 
-        # 配置pptpd.conf
-        cat > /etc/pptpd.conf << EOF
+    cat > /etc/pptpd.conf << EOF
 option /etc/ppp/options.pptpd
 logwtmp
 localip 192.168.0.1
 remoteip 192.168.0.100-200
 EOF
 
-        # 配置PPP选项
-        cat > /etc/ppp/options.pptpd << EOF
+    cat > /etc/ppp/options.pptpd << EOF
 name pptpd
 refuse-pap
 refuse-chap
@@ -286,87 +115,30 @@ nologfd
 ms-dns 8.8.8.8
 ms-dns 8.8.4.4
 EOF
-
-    elif [ "$release" == "ubuntu" ]; then
-        apt install -y pptpd ppp
-        systemctl enable pptpd
-
-        # 配置pptpd.conf
-        cat > /etc/pptpd.conf << EOF
-option /etc/ppp/pptpd-options
-logwtmp
-localip 192.168.0.1
-remoteip 192.168.0.100-200
-EOF
-
-        # 配置PPP选项
-        cat > /etc/ppp/pptpd-options << EOF
-name pptpd
-refuse-pap
-refuse-chap
-refuse-mschap
-require-mschap-v2
-require-mppe-128
-proxyarp
-lock
-nobsdcomp
-novj
-novjccomp
-nologfd
-ms-dns 8.8.8.8
-ms-dns 8.8.4.4
-EOF
-    fi
 
     read -p "请输入PPTP用户名: " pptp_user
     read -p "请输入PPTP密码: " pptp_password
     echo "$pptp_user pptpd $pptp_password *" >> /etc/ppp/chap-secrets
 
-    # 启用IP转发
     echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
     sysctl -p
 
-    # 加载GRE模块
+    # 加载GRE模块 - 关键修复
     echo "modprobe nf_conntrack_pptp" >> /etc/rc.local
     echo "modprobe nf_nat_pptp" >> /etc/rc.local
     modprobe nf_conntrack_pptp 2>/dev/null
     modprobe nf_nat_pptp 2>/dev/null
 
-    # 配置防火墙
-    configure_firewall_add "pptp"
-
-    # 启动服务
+    configure_firewall "pptp"
     systemctl restart pptpd
-    systemctl status pptpd
 
     echo "PPTP VPN 服务安装完成！"
     echo "用户名: $pptp_user"
     echo "密码: $pptp_password"
-    echo "服务器地址: $(curl -s ipinfo.io/ip || curl -s icanhazip.com || hostname -I | awk '{print $1}')"
+    echo "服务器地址: $(curl -s ipinfo.io/ip)"
 }
 
-# PPTP 卸载函数
-uninstall_pptp() {
-    echo "正在卸载 PPTP VPN 服务..."
-    systemctl stop pptpd
-    systemctl disable pptpd
-    if [ "$release" == "centos" ]; then
-        yum remove -y pptpd
-    elif [ "$release" == "ubuntu" ]; then
-        apt remove -y pptpd
-    fi
-    rm -f /etc/pptpd.conf
-    rm -f /etc/ppp/options.pptpd
-    rm -f /etc/ppp/pptpd-options
-    # 移除chap-secrets中的用户，或者清理整个文件如果不需要
-    sed -i "/ pptpd /d" /etc/ppp/chap-secrets # 删除所有PPTP用户
-    sed -i '/net.ipv4.ip_forward = 1/d' /etc/sysctl.conf
-    sysctl -p
-    configure_firewall_remove "pptp"
-    echo "PPTP VPN 服务已卸载。"
-}
-
-# L2TP/IPsec 安装函数 (基于Teddysun脚本优化)
+# L2TP/IPsec 安装
 install_l2tp() {
     echo "正在安装 L2TP/IPsec VPN 服务..."
 
@@ -399,12 +171,18 @@ install_l2tp() {
         l2tp_password=$(openssl rand -base64 12)
     fi
 
-    if [ "$release" == "centos" ]; then
-        # 安装EPEL和依赖
-        yum install -y epel-release
-        yum install -y gcc make flex bison ppp iptables libnss3-dev libnspr4-dev \
-                       libcap-ng-dev libevent-dev libcurl-devel unbound-devel \
-                       xmlto libunbound-devel curl wget xl2tpd
+    # 安装依赖
+    yum install -y epel-release
+    yum install -y gcc make flex bison ppp iptables libnss3-devel libnspr4-devel \
+                   libcap-ng-devel libevent-devel libcurl-devel unbound-devel \
+                   xmlto libunbound-devel curl wget xl2tpd
+
+    # 尝试直接安装libreswan，如果失败则从源码编译
+    if ! yum install -y libreswan; then
+        echo "通过yum安装libreswan失败，尝试从源码编译..."
+
+        # 安装编译依赖
+        yum install -y nspr-devel nss-devel gmp-devel flex bison
 
         # 下载并编译Libreswan
         cd /tmp
@@ -427,15 +205,14 @@ USE_NSS_IPSEC_PROFILE = false
 USE_GLIBC_KERN_FLIP_HEADERS = true
 EOF
 
-        make programs && make install
-        systemctl enable ipsec
-
-    elif [ "$release" == "ubuntu" ]; then
-        apt update
-        apt install -y libreswan xl2tpd
-        systemctl enable ipsec
+        # 编译安装并检查是否成功
+        if ! make programs && make install; then
+            echo "Libreswan编译安装失败，请检查系统环境或网络连接。"
+            return 1
+        fi
     fi
 
+    systemctl enable ipsec
     systemctl enable xl2tpd
 
     # 配置IPsec
@@ -538,7 +315,7 @@ EOF
     systemctl restart xl2tpd
 
     # 配置防火墙
-    configure_firewall_add "l2tp"
+    configure_firewall "l2tp"
 
     # 验证安装
     echo "正在验证L2TP/IPsec安装..."
@@ -560,126 +337,21 @@ EOF
     echo "=========================================="
 }
 
-# L2TP用户管理函数
-manage_l2tp_users() {
-    echo "----------------------------------------"
-    echo "       L2TP 用户管理"
-    echo "----------------------------------------"
-    echo "1. 列出所有用户"
-    echo "2. 添加用户"
-    echo "3. 删除用户"
-    echo "4. 修改用户密码"
-    echo "0. 返回主菜单"
-    echo "----------------------------------------"
-
-    read -p "请选择操作: " user_option
-
-    case $user_option in
-        1)
-            echo "当前L2TP用户列表:"
-            echo "----------------------------------------"
-            if [ -f /etc/ppp/chap-secrets ]; then
-                grep " l2tpd " /etc/ppp/chap-secrets | awk '{print "用户名: " $1 "  密码: " $3}'
-            else
-                echo "未找到用户配置文件"
-            fi
-            ;;
-        2)
-            read -p "请输入新用户名: " new_user
-            read -p "请输入新密码: " new_pass
-            if [ -n "$new_user" ] && [ -n "$new_pass" ]; then
-                echo "$new_user l2tpd $new_pass *" >> /etc/ppp/chap-secrets
-                echo "用户 $new_user 添加成功"
-            else
-                echo "用户名和密码不能为空"
-            fi
-            ;;
-        3)
-            read -p "请输入要删除的用户名: " del_user
-            if [ -n "$del_user" ]; then
-                sed -i "/^$del_user l2tpd /d" /etc/ppp/chap-secrets
-                echo "用户 $del_user 删除成功"
-            else
-                echo "用户名不能为空"
-            fi
-            ;;
-        4)
-            read -p "请输入要修改密码的用户名: " mod_user
-            read -p "请输入新密码: " mod_pass
-            if [ -n "$mod_user" ] && [ -n "$mod_pass" ]; then
-                sed -i "/^$mod_user l2tpd /c\\$mod_user l2tpd $mod_pass *" /etc/ppp/chap-secrets
-                echo "用户 $mod_user 密码修改成功"
-            else
-                echo "用户名和密码不能为空"
-            fi
-            ;;
-        0)
-            return
-            ;;
-        *)
-            echo "无效选项"
-            ;;
-    esac
-
-    read -p "按任意键继续..."
-    manage_l2tp_users
-}
-
-# L2TP/IPsec 卸载函数
-uninstall_l2tp() {
-    echo "正在卸载 L2TP/IPsec VPN 服务..."
-    if [ "$release" == "centos" ]; then
-        systemctl stop xl2tpd ipsec
-        systemctl disable xl2tpd ipsec
-        yum remove -y libreswan xl2tpd
-    elif [ "$release" == "ubuntu" ]; then
-        systemctl stop xl2tpd ipsec
-        systemctl disable xl2tpd ipsec
-        apt remove -y libreswan xl2tpd
-    fi
-    rm -f /etc/ipsec.conf
-    rm -f /etc/ipsec.secrets
-    rm -f /etc/xl2tpd/xl2tpd.conf
-    rm -f /etc/ppp/options.xl2tpd
-    sed -i "/ l2tpd /d" /etc/ppp/chap-secrets # 移除所有L2TP用户
-    # 清理sysctl配置
-    sed -i '/net.ipv4.ip_forward = 1/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.conf.all.send_redirects = 0/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.conf.default.send_redirects = 0/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.conf.all.accept_redirects = 0/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.conf.default.accept_redirects = 0/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.conf.all.accept_source_route = 0/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.conf.default.accept_source_route = 0/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.conf.all.rp_filter = 0/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.conf.default.rp_filter = 0/d' /etc/sysctl.conf
-    sed -i '/net.ipv4.conf.lo.rp_filter = 0/d' /etc/sysctl.conf
-    sed -i "/net.ipv4.conf.${MAIN_INTERFACE}.rp_filter = 0/d" /etc/sysctl.conf
-    sysctl -p
-    configure_firewall_remove "l2tp"
-    echo "L2TP/IPsec VPN 服务已卸载。"
-}
-
-# OpenVPN 安装函数
+# OpenVPN 安装
 install_openvpn() {
     echo "正在安装 OpenVPN 服务..."
-    if [ "$release" == "centos" ]; then
-        yum install -y openvpn easy-rsa
-        mkdir -p /etc/openvpn/easy-rsa/keys
-        # 查找easy-rsa实际安装路径
-        EASYRSA_PATH=$(find /usr/share -name "easyrsa" -type f 2>/dev/null | head -1)
-        if [ -n "$EASYRSA_PATH" ]; then
-            EASYRSA_DIR=$(dirname "$EASYRSA_PATH")
-            cp -r "$EASYRSA_DIR"/* /etc/openvpn/easy-rsa/
-        else
-            # 尝试复制整个easy-rsa目录
-            if [ -d "/usr/share/easy-rsa" ]; then
-                cp -r /usr/share/easy-rsa/* /etc/openvpn/easy-rsa/
-            fi
+    yum install -y openvpn easy-rsa
+    mkdir -p /etc/openvpn/easy-rsa/keys
+    # 查找easy-rsa实际安装路径
+    EASYRSA_PATH=$(find /usr/share -name "easyrsa" -type f 2>/dev/null | head -1)
+    if [ -n "$EASYRSA_PATH" ]; then
+        EASYRSA_DIR=$(dirname "$EASYRSA_PATH")
+        cp -r "$EASYRSA_DIR"/* /etc/openvpn/easy-rsa/
+    else
+        # 尝试复制整个easy-rsa目录
+        if [ -d "/usr/share/easy-rsa" ]; then
+            cp -r /usr/share/easy-rsa/* /etc/openvpn/easy-rsa/
         fi
-    elif [ "$release" == "ubuntu" ]; then
-        apt install -y openvpn easy-rsa
-        mkdir -p /etc/openvpn/easy-rsa/keys
-        cp -r /usr/share/easy-rsa/* /etc/openvpn/easy-rsa/
     fi
 
     cd /etc/openvpn/easy-rsa/
@@ -772,7 +444,7 @@ EOF
         echo "journalctl -u openvpn@server"
     fi
 
-    configure_firewall_add "openvpn"
+    configure_firewall "openvpn"
 
     echo "OpenVPN 服务安装完成！"
     echo "下一步是生成客户端配置文件。"
@@ -782,38 +454,17 @@ EOF
     fi
 }
 
-# OpenVPN 客户端配置生成函数
+# 生成OpenVPN客户端配置
 generate_openvpn_client() {
     cd /etc/openvpn/easy-rsa/
 
     read -p "请输入客户端名称 (例如: client1): " client_name
+    client_name=${client_name:-client1}
 
-    # 验证客户端名称不为空
-    if [ -z "$client_name" ]; then
-        client_name="client1"
-        echo "客户端名称为空，使用默认名称: $client_name"
-    fi
-
-    # 验证客户端名称只包含字母数字和下划线
-    if [[ ! "$client_name" =~ ^[a-zA-Z0-9_]+$ ]]; then
-        echo "错误: 客户端名称只能包含字母、数字和下划线"
-        return 1
-    fi
-
-    # 检查客户端证书是否已存在，避免重复生成
     if [ ! -f "pki/issued/${client_name}.crt" ]; then
         echo "" | ./easyrsa gen-req "$client_name" nopass
         echo "yes" | ./easyrsa sign-req client "$client_name"
-
-        # 验证证书是否成功生成
-        if [ ! -f "pki/issued/${client_name}.crt" ] || [ ! -f "pki/private/${client_name}.key" ]; then
-            echo "错误: 客户端证书生成失败"
-            return 1
-        fi
-    else
-        echo "客户端 $client_name 的证书已存在，跳过生成。"
     fi
-
 
     server_ip=$(curl -s ifconfig.me)
 
@@ -845,46 +496,149 @@ $(cat /etc/openvpn/ta.key)
 </tls-auth>
 EOF
     echo "客户端配置文件已生成到 /root/$client_name.ovpn"
-    echo "请将此文件下载到您的客户端设备并导入。"
-    echo "如果要生成更多客户端，请再次运行脚本并选择生成客户端配置。"
 }
 
+# 卸载函数
+uninstall_pptp() {
+    systemctl stop pptpd
+    systemctl disable pptpd
+    yum remove -y pptpd
+    rm -f /etc/pptpd.conf /etc/ppp/options.pptpd
+    sed -i "/ pptpd /d" /etc/ppp/chap-secrets
 
-# OpenVPN 卸载函数
+    # 清理GRE模块加载配置
+    sed -i '/modprobe nf_conntrack_pptp/d' /etc/rc.local
+    sed -i '/modprobe nf_nat_pptp/d' /etc/rc.local
+
+    # 清理sysctl配置
+    sed -i '/net.ipv4.ip_forward = 1/d' /etc/sysctl.conf
+    sysctl -p
+
+    configure_firewall "pptp" "remove"
+    echo "PPTP VPN 服务已卸载。"
+}
+
+uninstall_l2tp() {
+    echo "正在卸载 L2TP/IPsec VPN 服务..."
+    systemctl stop xl2tpd ipsec
+    systemctl disable xl2tpd ipsec
+    yum remove -y libreswan xl2tpd
+    rm -f /etc/ipsec.conf
+    rm -f /etc/ipsec.secrets
+    rm -f /etc/xl2tpd/xl2tpd.conf
+    rm -f /etc/ppp/options.xl2tpd
+    sed -i "/ l2tpd /d" /etc/ppp/chap-secrets # 移除所有L2TP用户
+    # 清理sysctl配置
+    sed -i '/net.ipv4.ip_forward = 1/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.all.send_redirects = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.default.send_redirects = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.all.accept_redirects = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.default.accept_redirects = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.all.accept_source_route = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.default.accept_source_route = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.all.rp_filter = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.default.rp_filter = 0/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.conf.lo.rp_filter = 0/d' /etc/sysctl.conf
+    sed -i "/net.ipv4.conf.${MAIN_INTERFACE}.rp_filter = 0/d" /etc/sysctl.conf
+    sysctl -p
+    configure_firewall "l2tp" "remove"
+    echo "L2TP/IPsec VPN 服务已卸载。"
+}
+
 uninstall_openvpn() {
     echo "正在卸载 OpenVPN 服务..."
     systemctl stop openvpn@server
     systemctl disable openvpn@server
-    if [ "$release" == "centos" ]; then
-        yum remove -y openvpn easy-rsa
-    elif [ "$release" == "ubuntu" ]; then
-        apt remove -y openvpn easy-rsa
-    fi
+    yum remove -y openvpn easy-rsa
     rm -rf /etc/openvpn/*
     # 移除sysctl转发配置
     sed -i '/net.ipv4.ip_forward = 1/d' /etc/sysctl.conf
     sysctl -p
-    configure_firewall_remove "openvpn"
+    configure_firewall "openvpn" "remove"
     echo "OpenVPN 服务已卸载。"
 }
 
+# L2TP用户管理函数
+manage_l2tp_users() {
+    echo "----------------------------------------"
+    echo "       L2TP 用户管理"
+    echo "----------------------------------------"
+    echo "1. 列出所有用户"
+    echo "2. 添加用户"
+    echo "3. 删除用户"
+    echo "4. 修改用户密码"
+    echo "0. 返回主菜单"
+    echo "----------------------------------------"
+
+    read -p "请选择操作: " user_option
+
+    case $user_option in
+        1)
+            echo "当前L2TP用户列表:"
+            echo "----------------------------------------"
+            if [ -f /etc/ppp/chap-secrets ]; then
+                grep " l2tpd " /etc/ppp/chap-secrets | awk '{print "用户名: " $1 "  密码: " $3}'
+            else
+                echo "未找到用户配置文件"
+            fi
+            ;;
+        2)
+            read -p "请输入新用户名: " new_user
+            read -p "请输入新密码: " new_pass
+            if [ -n "$new_user" ] && [ -n "$new_pass" ]; then
+                echo "$new_user l2tpd $new_pass *" >> /etc/ppp/chap-secrets
+                echo "用户 $new_user 添加成功"
+            else
+                echo "用户名和密码不能为空"
+            fi
+            ;;
+        3)
+            read -p "请输入要删除的用户名: " del_user
+            if [ -n "$del_user" ]; then
+                sed -i "/^$del_user l2tpd /d" /etc/ppp/chap-secrets
+                echo "用户 $del_user 删除成功"
+            else
+                echo "用户名不能为空"
+            fi
+            ;;
+        4)
+            read -p "请输入要修改密码的用户名: " mod_user
+            read -p "请输入新密码: " mod_pass
+            if [ -n "$mod_user" ] && [ -n "$mod_pass" ]; then
+                sed -i "/^$mod_user l2tpd /c\\$mod_user l2tpd $mod_pass *" /etc/ppp/chap-secrets
+                echo "用户 $mod_user 密码修改成功"
+            else
+                echo "用户名和密码不能为空"
+            fi
+            ;;
+        0)
+            return
+            ;;
+        *)
+            echo "无效选项"
+            ;;
+    esac
+
+    read -p "按任意键继续..."
+    manage_l2tp_users
+}
 
 # 主菜单
 main_menu() {
-    install_dependencies # 确保安装了依赖
+    install_dependencies
 
     clear
     echo "----------------------------------------"
-    echo "       VPN 服务安装与卸载脚本"
+    echo "       CentOS VPN 服务管理脚本"
     echo "----------------------------------------"
     echo "1. 安装 PPTP VPN"
     echo "2. 卸载 PPTP VPN"
-    echo "3. 安装 L2TP/IPsec VPN (优化版)"
+    echo "3. 安装 L2TP/IPsec VPN"
     echo "4. 卸载 L2TP/IPsec VPN"
     echo "5. L2TP 用户管理"
     echo "6. 安装 OpenVPN"
     echo "7. 卸载 OpenVPN"
-    echo "8. 生成 OpenVPN 客户端配置文件"
+    echo "8. 生成 OpenVPN 客户端配置"
     echo "0. 退出"
     echo "----------------------------------------"
 
