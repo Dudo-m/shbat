@@ -28,11 +28,6 @@ curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker
 bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/vpn/vpn-centos.sh)
 ```
 
-**Ubuntu/Debian 系统:**
-```bash
-bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/vpn/vpn-ubuntu.sh)
-```
-
 #### 邮件服务器
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/email/email-centos.sh)
@@ -49,8 +44,7 @@ shbat/
 ├── email/               # 邮件服务脚本
 │   └── email-centos.sh  # CentOS 邮件服务器配置
 ├── vpn/                 # VPN 服务脚本
-│   ├── vpn-centos.sh    # CentOS/RHEL/Fedora VPN 配置
-│   └── vpn-ubuntu.sh    # Ubuntu/Debian VPN 配置
+│   └── vpn-centos.sh    # CentOS/RHEL/Fedora VPN 配置
 ├── CODEBUDDY.md         # 开发文档
 ├── README.md            # 本文件
 └── README-gitee.md      # Gitee 专用说明

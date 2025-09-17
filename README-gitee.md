@@ -48,13 +48,7 @@ bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/email/email-centos
 bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-centos.sh)
 ```
 
-#### Ubuntu 专用 VPN 脚本 (vpn/vpn-ubuntu.sh)
-**功能**: 针对 Ubuntu/Debian 优化，使用 ufw + apt
 
-**Gitee:**
-```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-ubuntu.sh)
-```
 
 ## 📋 使用说明
 
@@ -74,8 +68,7 @@ shbat/
 ├── email/               # 邮件服务脚本  
 │   └── email-centos.sh  # CentOS 邮件服务器
 ├── vpn/                 # VPN 服务脚本
-│   ├── vpn-centos.sh    # CentOS VPN 服务
-│   └── vpn-ubuntu.sh    # Ubuntu VPN 服务
+│   └── vpn-centos.sh    # CentOS VPN 服务
 ├── CODEBUDDY.md         # 开发文档
 ├── README.md            # 国际版说明
 └── README-gitee.md      # 中文版说明 (本文件)
@@ -105,11 +98,6 @@ curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker_services.sh
 **CentOS 系统:**
 ```bash
 bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-centos.sh)
-```
-
-**Ubuntu 系统:**
-```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-ubuntu.sh)
 ```
 
 ## ⚠️ 注意事项

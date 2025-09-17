@@ -16,7 +16,6 @@ Scripts are organized into categorized folders:
 
 ### `/vpn/`
 - `vpn-centos.sh` - CentOS/RHEL/Fedora optimized VPN script
-- `vpn-ubuntu.sh` - Ubuntu/Debian optimized VPN script
 
 ## Common Usage Patterns
 
@@ -83,7 +82,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master
 
 ### VPN Services
 - **`vpn/vpn-centos.sh`** - CentOS/RHEL/Fedora optimized version using firewalld and yum
-- **`vpn/vpn-ubuntu.sh`** - Ubuntu/Debian optimized version using ufw and apt
 - **Protocols**: PPTP, L2TP/IPsec, OpenVPN
 - **Features**: Automatic firewall configuration, certificate management for OpenVPN, system-specific optimizations
 

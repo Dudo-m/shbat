@@ -68,6 +68,9 @@ configure_firewall() {
             "pptp")
                 firewall-cmd --permanent --remove-port=1723/tcp
                 firewall-cmd --permanent --remove-protocol=gre
+                firewall-cmd --permanent --direct --remove-rule ipv4 filter FORWARD 0 -i ppp+ -j ACCEPT 2>/dev/null || true
+                firewall-cmd --permanent --direct --remove-rule ipv4 filter FORWARD 0 -o ppp+ -j ACCEPT 2>/dev/null || true
+                firewall-cmd --permanent --direct --remove-rule ipv4 nat POSTROUTING 0 -s 192.168.0.0/24 -o "$MAIN_INTERFACE" -j MASQUERADE 2>/dev/null || true
                 ;;
             "l2tp")
                 firewall-cmd --permanent --remove-port=500/udp
@@ -394,6 +397,15 @@ uninstall_pptp() {
     yum remove -y pptpd
     rm -f /etc/pptpd.conf /etc/ppp/options.pptpd
     sed -i "/ pptpd /d" /etc/ppp/chap-secrets
+    
+    # 清理GRE模块加载配置
+    sed -i '/modprobe nf_conntrack_pptp/d' /etc/rc.local
+    sed -i '/modprobe nf_nat_pptp/d' /etc/rc.local
+    
+    # 清理sysctl配置
+    sed -i '/net.ipv4.ip_forward = 1/d' /etc/sysctl.conf
+    sysctl -p
+    
     configure_firewall "pptp" "remove"
     echo "PPTP VPN 服务已卸载。"
 }
