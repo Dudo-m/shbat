@@ -1,103 +1,84 @@
-## 一些用 AI 写的脚本
+# System Administration Scripts
 
-### 📁 Docker 相关脚本
+> **中文用户请查看**: [README-gitee.md](README-gitee.md) | **For Chinese users**: [README-gitee.md](README-gitee.md)
 
-#### Docker 管理脚本 (docker/docker.sh)
-**功能**: Docker 安装、配置、容器管理、镜像操作
+AI-generated shell scripts for system administration and service deployment on Linux systems (CentOS/RHEL and Ubuntu/Debian).
 
-**GitHub:**
+## 🚀 Quick Start
+
+### Docker Management
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker/docker.sh)
+# CentOS/RHEL/Fedora
+bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker/docker-centos.sh)
+
+# Ubuntu/Debian
+bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker/docker-ubuntu.sh)
 ```
 
-**Gitee:**
+### Service Installation
 ```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker.sh)
-```
-
-#### 常用服务安装脚本 (docker/docker_services.sh)
-**功能**: 一键安装 Redis、MySQL、PostgreSQL、Nginx、Elasticsearch 等服务
-
-**GitHub:**
-```bash
+# Install Redis, MySQL, PostgreSQL, Nginx, Elasticsearch, etc.
 bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/docker/docker_services.sh)
 ```
 
-**Gitee:**
+### VPN Setup
 ```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker_services.sh)
-```
-
-### 📧 邮件服务脚本
-
-#### 邮件服务器安装脚本 (email/email.sh)
-**功能**: Postfix + Dovecot 邮件服务器配置 (适用于 CentOS 7)
-
-**GitHub:**
-```bash
-bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/email/email.sh)
-```
-
-**Gitee:**
-```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/email/email.sh)
-```
-
-### 🔒 VPN 服务脚本
-
-#### 通用 VPN 脚本 (vpn/vpn.sh)
-**功能**: 支持 PPTP、L2TP/IPsec、OpenVPN，自动检测系统类型
-
-**GitHub:**
-```bash
-bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/vpn/vpn.sh)
-```
-
-**Gitee:**
-```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn.sh)
-```
-
-#### CentOS 专用 VPN 脚本 (vpn/vpn-centos.sh)
-**功能**: 针对 CentOS/RHEL/Fedora 优化，使用 firewalld + yum
-
-**GitHub:**
-```bash
+# CentOS/RHEL/Fedora
 bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/vpn/vpn-centos.sh)
-```
 
-**Gitee:**
-```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-centos.sh)
-```
-
-#### Ubuntu 专用 VPN 脚本 (vpn/vpn-ubuntu.sh)
-**功能**: 针对 Ubuntu/Debian 优化，使用 ufw + apt
-
-**GitHub:**
-```bash
+# Ubuntu/Debian
 bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/vpn/vpn-ubuntu.sh)
 ```
 
-**Gitee:**
+### Email Server
 ```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-ubuntu.sh)
+# CentOS Email Server (Postfix + Dovecot)
+bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/email/email-centos.sh)
 ```
 
-## 📋 使用说明
-
-- 所有脚本需要 root 权限运行
-- 支持 CentOS/RHEL、Ubuntu/Debian 系统
-- 脚本会自动安装依赖和配置防火墙
-- 建议在全新系统上运行以避免冲突
-
-## 🗂️ 目录结构
+## 📁 Repository Structure
 
 ```
 shbat/
-├── docker/          # Docker 相关脚本
-├── email/           # 邮件服务脚本  
-├── vpn/             # VPN 服务脚本
-├── CODEBUDDY.md     # 开发文档
-└── README.md        # 使用说明
+├── docker/              # Docker management scripts
+│   ├── docker-centos.sh # CentOS/RHEL/Fedora Docker management
+│   ├── docker-ubuntu.sh # Ubuntu/Debian Docker management
+│   └── docker_services.sh # Service installation script
+├── email/               # Email server scripts
+│   └── email-centos.sh  # CentOS email server setup
+├── vpn/                 # VPN service scripts
+│   ├── vpn-centos.sh    # CentOS/RHEL/Fedora VPN setup
+│   └── vpn-ubuntu.sh    # Ubuntu/Debian VPN setup
+├── CODEBUDDY.md         # Development documentation
+├── README.md            # This file
+└── README-gitee.md      # Chinese documentation
 ```
+
+## ✨ Features
+
+- **Interactive Menus**: User-friendly command-line interfaces
+- **Multi-Distribution Support**: Optimized for CentOS/RHEL/Fedora and Ubuntu/Debian
+- **Automatic Configuration**: Firewall, network, and security setup
+- **Service Management**: Docker containers, VPN protocols, email services
+- **Chinese Mirror Support**: Optimized for users in mainland China
+
+## 📋 Requirements
+
+- Linux system (CentOS/RHEL 7+, Ubuntu 18.04+, Debian 9+)
+- Root privileges
+- Internet connection
+
+## ⚠️ Important Notes
+
+- All scripts require root privileges
+- Scripts will modify system configurations
+- Recommended to test in a virtual environment first
+- Automatic firewall configuration included
+- Backup important data before running
+
+## 🔗 Mirrors
+
+- **GitHub**: https://github.com/Dudo-m/shbat
+- **Gitee** (China): https://gitee.com/LI_li_plus/shbat
+
+For detailed Chinese documentation and Gitee links, see [README-gitee.md](README-gitee.md).
