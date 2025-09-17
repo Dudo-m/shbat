@@ -236,353 +236,62 @@ EOF
     log_info "yum源配置完成！"
 }
 
+
+
 # ==================== Docker安装相关函数 ====================
 
-# 安装系统依赖
-install_dependencies() {
-    log_purple "安装系统依赖包..."
-
-    if command_exists apt-get;
-        then
-        apt-get update
-        
-        local os_id
-        os_id=$(detect_os)
-        
-        # 定义基础依赖包
-        local packages_to_install=(
-            "apt-transport-https"
-            "ca-certificates"
-            "curl"
-            "gnupg"
-            "lsb-release"
-            "wget"
-        )
-        
-        # software-properties-common 主要用于Ubuntu管理PPA，Debian通常不需要
-        if [[ "$os_id" == "ubuntu" ]]; then
-            packages_to_install+=("software-properties-common")
-        fi
-        
-        log_info "将为 $os_id 安装以下依赖: ${packages_to_install[*]}"
-        if ! apt-get install -y "${packages_to_install[@]}"; then
-            log_error "依赖包安装失败"
-            return 1
-        fi
-
-    elif command_exists yum;
-        then
-        yum install -y \
-            yum-utils \
-            device-mapper-persistent-data \
-            lvm2 \
-            curl \
-            wget
-    elif command_exists dnf;
-        then
-        dnf install -y \
-            dnf-utils \
-            device-mapper-persistent-data \
-            lvm2 \
-            curl \
-            wget
-    else
-        log_error "不支持的包管理器"
-        return 1
-    fi
-}
-
-
-# Docker安装（合并国内外源）
-install_docker() {
-    log_purple "开始安装Docker..."
-
+# Docker 一键安装
+install_docker_menu() {
+    log_purple "Docker 一键安装脚本..."
+    
     if command_exists docker; then
         log_warn "Docker已安装，版本信息："
         docker --version
-        return 0
+        if ! confirm_action "是否仍要运行安装脚本？"; then
+            log_info "操作已取消"
+            return 0
+        fi
     fi
 
-    # 询问用户选择源
-    local source_choice
     echo
-    log_info "请选择Docker安装源："
-    log_info "  1) 官方源（默认）"
-    log_info "  2) 国内源（推荐国内用户选择）"
+    log_info "请选择安装方式："
+    log_info "  1) 轩辕镜像一键配置 (推荐)"
+    log_info "     专为国内用户优化，一键配置镜像加速"
+    log_info "  2) Docker 官方安装脚本"
+    log_info "     官方提供，国内可能访问慢"
+    log_info "  3) 阿里云镜像安装"
+    log_info "     使用阿里云镜像源，适合国内网络"
     echo
-    read -rp "请输入选择 (1/2，默认为1): " source_choice
+    log_blue "文档来源: https://dockerdocs.xuanyuan.me/install"
     echo
+    read -rp "请输入选择 (1-3，默认为1): " install_choice
 
-    case "${source_choice:-1}" in
+    case "${install_choice:-1}" in
+        1)
+            log_info "执行轩辕镜像一键配置脚本..."
+            bash <(curl -sSL https://xuanyuan.cloud/docker.sh)
+            ;;
         2)
-            log_info "使用国内源安装Docker..."
-            install_docker_cn_impl
+            log_info "执行 Docker 官方安装脚本..."
+            curl -fsSL https://get.docker.com | bash -s docker
+            ;;
+        3)
+            log_info "执行阿里云镜像安装脚本..."
+            curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun
             ;;
         *)
-            log_info "使用官方源安装Docker..."
-            install_docker_official_impl
+            log_error "无效选择"
+            return 1
             ;;
     esac
-}
 
-# Docker官方源安装实现
-install_docker_official_impl() {
-    check_network
-    install_dependencies
-
-    local os_type
-    os_type=$(detect_os)
-    log_info "检测到操作系统: $os_type"
-
-    if [[ "$os_type" =~ ^(ubuntu|debian)$ ]]; then
-        # Ubuntu/Debian安装流程
-        curl -fsSL https://download.docker.com/linux/$os_type/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-        chmod a+r /etc/apt/keyrings/docker.gpg
-
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$os_type $(lsb_release -cs) stable" | \
-        tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-        apt-get update
-        apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
-
-    elif [[ "$os_type" =~ ^(centos|rhel|fedora)$ ]]; then
-        # CentOS/RHEL/Fedora安装流程
-        if command_exists dnf; then
-            dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-            dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
-        else
-            yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-            yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
-        fi
+    # 检查安装后Docker命令是否存在
+    if command_exists docker; then
+        log_info "Docker 安装脚本执行完毕！"
+        docker --version
     else
-        log_error "不支持的操作系统: $os_type"
-        return 1
+        log_error "Docker 安装可能失败，请检查脚本输出。"
     fi
-
-    # 启动并设置开机自启
-    systemctl start docker
-    systemctl enable docker
-
-    # 添加当前用户到docker组
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        usermod -aG docker "$SUDO_USER"
-        log_info "已将用户 $SUDO_USER 添加到docker组，请重新登录生效"
-    fi
-
-    log_info "Docker安装完成！"
-    docker --version
-}
-
-# Docker国内源安装实现
-install_docker_cn_impl() {
-    check_network
-    install_dependencies
-
-    local os_type
-    os_type=$(detect_os)
-    log_info "检测到操作系统: $os_type"
-
-    if [[ "$os_type" =~ ^(ubuntu|debian)$ ]]; then
-        # 使用阿里云Docker源
-        curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/$os_type/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-        chmod a+r /etc/apt/keyrings/docker.gpg
-
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://mirrors.aliyun.com/docker-ce/linux/$os_type $(lsb_release -cs) stable" | \
-        tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-        apt-get update
-        apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
-
-    elif [[ "$os_type" =~ ^(centos|rhel|fedora)$ ]]; then
-        # 使用阿里云Docker源
-        if command_exists dnf; then
-            dnf config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
-            dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
-        else
-            yum-config-manager --add-repo https://mirrors.aliyun.com/docker-ce/linux/centos/docker-ce.repo
-            yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
-        fi
-    else
-        log_error "不支持的操作系统: $os_type"
-        return 1
-    fi
-
-    # 启动并设置开机自启
-    systemctl start docker
-    systemctl enable docker
-
-    # 添加当前用户到docker组
-    if [[ -n "${SUDO_USER:-}" ]]; then
-        usermod -aG docker "$SUDO_USER"
-        log_info "已将用户 $SUDO_USER 添加到docker组，请重新登录生效"
-    fi
-
-    log_info "Docker安装完成！"
-    docker --version
-}
-
-# 获取最新Docker Compose版本
-get_latest_compose_version() {
-    local version
-
-    # 尝试从GitHub API获取最新版本
-    version=$(curl -s --connect-timeout 10 --max-time 15 \
-        "https://api.github.com/repos/docker/compose/releases/latest" 2>/dev/null | \
-        grep -o '"tag_name": *"[^"]*"' | \
-        grep -o '[^"]*$' | \
-        head -1)
-
-    # 如果GitHub API失败，使用备用版本
-    if [[ -z "$version" ]]; then
-        log_warn "无法获取最新版本，使用备用版本: $COMPOSE_FALLBACK_VERSION"
-        version="$COMPOSE_FALLBACK_VERSION"
-    else
-        log_info "获取到最新版本: $version"
-    fi
-
-    echo "$version"
-}
-
-# Docker Compose安装（合并国内外源）
-install_docker_compose() {
-    log_purple "开始安装Docker Compose..."
-
-    if command_exists docker-compose; then
-        log_warn "Docker Compose已安装，版本信息："
-        docker-compose --version
-        return 0
-    fi
-
-    # 询问用户选择源
-    local source_choice
-    echo
-    log_info "请选择Docker Compose安装源："
-    log_info "  1) 官方源（默认）"
-    log_info "  2) 国内源（推荐国内用户选择）"
-    echo
-    read -rp "请输入选择 (1/2，默认为1): " source_choice
-    echo
-
-    case "${source_choice:-1}" in
-        2)
-            log_info "使用国内源安装Docker Compose..."
-            install_compose_via_package_manager
-            ;;
-        *)
-            log_info "使用官方源安装Docker Compose..."
-            install_docker_compose_official_impl
-            ;;
-    esac
-}
-
-# Docker Compose官方源安装实现
-install_docker_compose_official_impl() {
-    check_network
-
-    local version
-    version=$(get_latest_compose_version)
-
-    local arch
-    arch=$(uname -m)
-    local os
-    os=$(uname -s | tr '[:upper:]' '[:lower:]')
-
-    # 适配不同架构
-    case $arch in
-        x86_64) arch="x86_64" ;;
-        aarch64) arch="aarch64" ;;
-        armv7l) arch="armv7" ;;
-        *) log_error "不支持的架构: $arch"; return 1 ;;
-    esac
-
-    log_info "下载Docker Compose $version for $os-$arch..."
-
-    local download_url="https://github.com/docker/compose/releases/download/${version}/docker-compose-${os}-${arch}"
-
-    if curl -L --fail --show-error --progress-bar \
-        "$download_url" -o /usr/local/bin/docker-compose; then
-        chmod +x /usr/local/bin/docker-compose
-        log_info "Docker Compose安装完成！"
-        docker-compose --version
-    else
-        log_error "Docker Compose下载失败"
-        return 1
-    fi
-}
-
-# 通过包管理器安装Docker Compose
-install_compose_via_package_manager() {
-    check_network
-    
-    log_info "尝试通过系统包管理器安装..."
-
-    if command_exists apt-get; then
-        # Ubuntu/Debian：先尝试安装docker-compose-plugin
-        if apt-get update && apt-get install -y docker-compose-plugin; then
-            # 创建docker-compose命令的软链接以兼容旧版本使用习惯
-            if [[ ! -f /usr/local/bin/docker-compose ]]; then
-                cat > /usr/local/bin/docker-compose <<'EOF'
-#!/bin/bash
-exec docker compose "$@"
-EOF
-                chmod +x /usr/local/bin/docker-compose
-            fi
-            log_info "通过apt安装docker-compose-plugin成功"
-            return 0
-        fi
-
-        # 如果plugin安装失败，尝试传统的docker-compose包
-        if apt-get install -y docker-compose; then
-            log_info "通过apt安装docker-compose成功"
-            return 0
-        fi
-
-    elif command_exists yum; then
-        # CentOS/RHEL：先尝试安装docker-compose-plugin
-        yum install -y epel-release 2>/dev/null || true
-        if yum install -y docker-compose-plugin; then
-            # 创建docker-compose命令的软链接以兼容旧版本使用习惯
-            if [[ ! -f /usr/local/bin/docker-compose ]]; then
-                cat > /usr/local/bin/docker-compose <<'EOF'
-#!/bin/bash
-exec docker compose "$@"
-EOF
-                chmod +x /usr/local/bin/docker-compose
-            fi
-            log_info "通过yum安装docker-compose-plugin成功"
-            return 0
-        fi
-
-        # 如果plugin安装失败，尝试传统的docker-compose包
-        if yum install -y docker-compose; then
-            log_info "通过yum安装docker-compose成功"
-            return 0
-        fi
-
-    elif command_exists dnf; then
-        # Fedora：先尝试安装docker-compose-plugin
-        if dnf install -y docker-compose-plugin; then
-            # 创建docker-compose命令的软链接以兼容旧版本使用习惯
-            if [[ ! -f /usr/local/bin/docker-compose ]]; then
-                cat > /usr/local/bin/docker-compose <<'EOF'
-#!/bin/bash
-exec docker compose "$@"
-EOF
-                chmod +x /usr/local/bin/docker-compose
-            fi
-            log_info "通过dnf安装docker-compose-plugin成功"
-            return 0
-        fi
-
-        # 如果plugin安装失败，尝试传统的docker-compose包
-        if dnf install -y docker-compose; then
-            log_info "通过dnf安装docker-compose成功"
-            return 0
-        fi
-    fi
-
-    log_error "所有安装方法都失败了"
-    return 1
 }
 
 # ==================== Docker配置相关函数 ====================
@@ -1760,6 +1469,7 @@ show_menu() {
     clear
     echo
     echo "================ Docker 管理脚本 v${SCRIPT_VERSION} ================"
+    echo "在线文档: https://dockerdocs.xuanyuan.me/"
     echo
     echo "📋 Docker 状态管理:"
     echo "  1. 查看 Docker 详细状态"
@@ -1777,14 +1487,11 @@ show_menu() {
     echo "🛠️ 系统管理:"
     echo "  8. 清理 Docker 系统"
     echo "  9. 配置 Docker 镜像加速器"
-    echo
-    echo "⚙️ 安装配置:"
     echo "  10. 换国内源(apt/yum/dnf)"
-    echo "  11. 一键安装 Docker"
-    echo "  12. 安装 Docker Compose"
     echo
-    echo "🗑️ 卸载:"
-    echo "  13. 完全卸载 Docker"
+    echo "⚙️ 安装与卸载:"
+    echo "  11. 一键安装 Docker"
+    echo "  12. 完全卸载 Docker"
     echo
     echo "  0. 退出脚本"
     echo "=================================================="
@@ -1802,7 +1509,7 @@ main() {
         show_menu
 
         local choice
-        read -rp "请选择操作 [0-13]: " choice
+        read -rp "请选择操作 [0-12]: " choice
 
         echo
         case $choice in
@@ -1840,13 +1547,9 @@ main() {
                 ;;
             11)
                 check_root
-                install_docker
+                install_docker_menu
                 ;;
             12)
-                check_root
-                install_docker_compose
-                ;;
-            13)
                 check_root
                 uninstall_docker
                 ;;
@@ -1855,7 +1558,7 @@ main() {
                 exit 0
                 ;;
             *)
-                log_error "无效选择，请输入 0-13 之间的数字"
+                log_error "无效选择，请输入 0-12 之间的数字"
                 ;;
         esac
 
