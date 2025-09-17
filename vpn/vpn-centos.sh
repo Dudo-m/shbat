@@ -62,6 +62,7 @@ configure_firewall() {
                 ;;
         esac
     else
+        firewall-cmd --zone=public --remove-masquerade --permanent
         case "$service_type" in
             "pptp")
                 firewall-cmd --permanent --remove-port=1723/tcp
