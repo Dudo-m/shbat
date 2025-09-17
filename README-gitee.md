@@ -2,107 +2,72 @@
 
 > **本文档专为国内用户提供 Gitee 镜像链接，网络访问更稳定**
 
-### 📁 Docker 相关脚本
+### 🚀 快速开始
 
-#### Docker 管理脚本 (CentOS/RHEL/Fedora)
-**功能**: Docker 安装、配置、容器管理、镜像操作
+#### Docker 环境搭建 (通用)
 
-**Gitee:**
-```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker-centos.sh)
-```
-
-#### Docker 管理脚本 (Ubuntu/Debian)
-**功能**: Docker 安装、配置、容器管理、镜像操作
+此脚本会自动检测您的系统 (CentOS/RHEL/Fedora/Ubuntu/Debian) 并执行相应的操作。
 
 **Gitee:**
 ```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker-ubuntu.sh)
+bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker.sh)
 ```
 
-#### 常用服务安装脚本 (docker/docker_services.sh)
-**功能**: 一键安装 Redis、MySQL、PostgreSQL、Nginx、Elasticsearch 等服务
-
+#### 常用服务安装
 **Gitee:**
 ```bash
 curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker_services.sh | bash
 ```
 
-### 📧 邮件服务脚本
+#### VPN 服务搭建
 
-#### CentOS 邮件服务器脚本 (email/email-centos.sh)
-**功能**: Postfix + Dovecot 邮件服务器配置，支持 SMTP、POP3、IMAP
+**CentOS/RHEL/Fedora 系统:**
+**Gitee:**
+```bash
+bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-centos.sh)
+```
 
+#### 邮件服务器
 **Gitee:**
 ```bash
 bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/email/email-centos.sh)
 ```
 
-### 🔒 VPN 服务脚本
-
-#### CentOS 专用 VPN 脚本 (vpn/vpn-centos.sh)
-**功能**: 针对 CentOS/RHEL/Fedora 优化，使用 firewalld + yum
-
-**Gitee:**
-```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-centos.sh)
-```
-
-
-
-## 📋 使用说明
-
-- 所有脚本需要 root 权限运行
-- 支持 CentOS/RHEL、Ubuntu/Debian 系统
-- 脚本会自动安装依赖和配置防火墙
-- 建议在全新系统上运行以避免冲突
-
-## 🗂️ 目录结构
+### 📁 目录结构
 
 ```
 shbat/
 ├── docker/              # Docker 相关脚本
-│   ├── docker-centos.sh # CentOS Docker 管理
-│   ├── docker-ubuntu.sh # Ubuntu Docker 管理
-│   └── docker_services.sh # 服务安装脚本
-├── email/               # 邮件服务脚本  
-│   └── email-centos.sh  # CentOS 邮件服务器
+│   ├── docker.sh        # 通用 Docker 环境管理脚本 (推荐)
+│   └── docker_services.sh # 常用服务安装脚本
+├── email/               # 邮件服务脚本
+│   └── email-centos.sh  # CentOS 邮件服务器配置
 ├── vpn/                 # VPN 服务脚本
-│   └── vpn-centos.sh    # CentOS VPN 服务
-├── CODEBUDDY.md         # 开发文档
-├── README.md            # 国际版说明
-└── README-gitee.md      # 中文版说明 (本文件)
+│   └── vpn-centos.sh    # CentOS/RHEL/Fedora VPN 配置
+├── README.md            # GitHub 版说明
+└── README-gitee.md      # Gitee 专用说明 (本文件)
 ```
 
-## 🚀 快速开始
+### ✨ 功能特点
 
-### Docker 环境搭建
+- **通用性**: 一个脚本支持 CentOS/RHEL/Fedora 和 Ubuntu/Debian。
+- **交互式菜单**: 友好的命令行界面，提供丰富的功能选项。
+- **全面的Docker管理**:
+  - 安装、卸载、配置镜像加速。
+  - 容器管理 (启动、停止、删除)。
+  - 镜像管理 (导入、导出)。
+  - 系统清理和状态检查。
+- **国内优化**: 包含中国大陆网络优化（apt/yum源、Docker 镜像源等）。
+- **自动配置**: 防火墙、网络和安全设置。
 
-**CentOS/RHEL/Fedora 系统:**
-```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker-centos.sh)
-```
+### 📋 系统要求
 
-**Ubuntu/Debian 系统:**
-```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker-ubuntu.sh)
-```
+- Linux 系统 (CentOS/RHEL 7+, Ubuntu 18.04+, Debian 9+, Fedora)
+- Root 权限
+- 网络连接
 
-### 常用服务部署
-```bash
-curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/docker/docker_services.sh | bash
-```
+### ⚠️ 注意事项
 
-### VPN 服务搭建
-
-**CentOS 系统:**
-```bash
-bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-centos.sh)
-```
-
-## ⚠️ 注意事项
-
-- 脚本会修改系统配置，建议先备份重要数据
-- 首次运行建议在测试环境中验证
-- 脚本包含中国大陆网络优化（Docker 镜像源等）
-- 支持防火墙自动配置（firewalld/ufw）
+- 所有脚本需要 root 权限运行。
+- 脚本会修改系统配置，建议先在测试环境中验证。
+- 运行前请备份重要数据。
