@@ -1959,8 +1959,13 @@ system_resource_monitor() {
         local empty=$((width - filled))
         
         printf "["
-        printf "%${filled}s" | tr ' ' '█'
-        printf "%${empty}s" | tr ' ' '░'
+        # 使用更兼容的字符
+        for ((i=0; i<filled; i++)); do
+            printf "█"
+        done
+        for ((i=0; i<empty; i++)); do
+            printf "░"
+        done
         printf "] %d%%" "$percentage"
     }
     
@@ -2094,7 +2099,7 @@ system_resource_monitor() {
         
         echo -e "${BLUE}🔥 CPU使用率${NC}"
         echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "  ${CYAN}使用率:${NC} $cpu_bar ${cpu_usage}%"
+        echo -e "  ${CYAN}使用率:${NC} $cpu_bar"
         echo -e "  ${CYAN}核心数:${NC} $cpu_cores"
         echo
         
@@ -2108,7 +2113,7 @@ system_resource_monitor() {
         
         echo -e "${BLUE}💾 内存使用${NC}"
         echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "  ${CYAN}使用率:${NC} $mem_bar ${mem_percentage}%"
+        echo -e "  ${CYAN}使用率:${NC} $mem_bar"
         echo -e "  ${CYAN}总内存:${NC} ${total_mb}MB"
         echo -e "  ${CYAN}已使用:${NC} ${used_mb}MB"
         echo -e "  ${CYAN}可用:${NC} ${available_mb}MB"
@@ -2121,7 +2126,7 @@ system_resource_monitor() {
         
         echo -e "${BLUE}💿 磁盘使用${NC}"
         echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "  ${CYAN}使用率:${NC} $disk_bar ${disk_percentage}%"
+        echo -e "  ${CYAN}使用率:${NC} $disk_bar"
         echo -e "  ${CYAN}总容量:${NC} $total_disk"
         echo -e "  ${CYAN}已使用:${NC} $used_disk"
         echo -e "  ${CYAN}可用:${NC} $available_disk"
