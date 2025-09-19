@@ -974,6 +974,86 @@ stop_container() {
     fi
 }
 
+# 交互式选择并重启运行中的容器
+restart_selected_containers() {
+    log_purple "交互式选择重启运行中的容器..."
+
+    local selected_containers
+    selected_containers=$(select_containers "running" "运行中的容器列表")
+    [[ $? -ne 0 ]] && return 1
+
+    local container_ids=($selected_containers)
+    local selected_count=${#container_ids[@]}
+    
+    # 显示选中的容器
+    log_info "已选择 $selected_count 个容器:"
+    for container_id in "${container_ids[@]}"; do
+        [[ -z "$container_id" ]] && continue
+        local container_info
+        container_info=$(docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}" --filter "id=$container_id" 2>/dev/null)
+        if [[ -n "$container_info" ]]; then
+            local name=$(echo "$container_info" | cut -d'|' -f2)
+            echo "  - $name ($container_id)"
+        fi
+    done
+
+    echo
+    if ! confirm_action "确认重启这些容器？"; then
+        log_info "操作已取消"
+        return 0
+    fi
+
+    # 并行重启容器
+    local commands=()
+    for container_id in "${container_ids[@]}"; do
+        [[ -z "$container_id" ]] && continue
+        commands+=("restart_container '$container_id'")
+    done
+
+    if [[ "${CONFIG[parallel_operations]}" == "true" ]]; then
+        log_info "并行重启容器..."
+        parallel_execute "${commands[@]}"
+    else
+        # 顺序重启容器
+        local current=0
+        local success_count=0
+        local fail_count=0
+
+        for container_id in "${container_ids[@]}"; do
+            [[ -z "$container_id" ]] && continue
+            current=$((current + 1))
+            show_progress $current $selected_count
+
+            if restart_container "$container_id"; then
+                success_count=$((success_count + 1))
+            else
+                fail_count=$((fail_count + 1))
+            fi
+        done
+        echo  # 换行
+
+        log_info "=== 重启完成统计 ==="
+        log_info "总容器数: $selected_count"
+        log_info "成功: $success_count"
+        [[ $fail_count -gt 0 ]] && log_warn "失败: $fail_count"
+    fi
+}
+
+# 重启单个容器
+restart_container() {
+    local container_id="$1"
+    local container_name
+    container_name=$(docker ps --format "{{.Names}}" --filter "id=$container_id" 2>/dev/null || echo "$container_id")
+
+    if docker restart "$container_id" >/dev/null 2>&1; then
+        log_success "重启成功: $container_name"
+        return 0
+    else
+        log_error "重启失败: $container_name"
+        return 1
+    fi
+}
+
 # 交互式选择并删除容器
 remove_selected_containers() {
     log_purple "交互式选择删除容器..."
