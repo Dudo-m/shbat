@@ -23,8 +23,6 @@ readonly NC='\033[0m' # No Color
 # 脚本版本和配置
 readonly SCRIPT_VERSION="5.0.0"
 readonly SCRIPT_START_DIR="$(pwd)"
-readonly LOG_FILE="/tmp/docker_manager_$(date +%Y%m%d_%H%M%S).log"
-readonly CONFIG_FILE="$HOME/.docker_manager.conf"
 
 # Docker Compose稳定版本
 readonly COMPOSE_FALLBACK_VERSION="v2.24.6"
@@ -61,73 +59,36 @@ log_info() {
     local message="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${GREEN}[INFO]${NC} ${timestamp} $message"
-    echo "[INFO] ${timestamp} $message" >> "$LOG_FILE"
 }
 
 log_warn() {
     local message="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${YELLOW}[WARN]${NC} ${timestamp} $message"
-    echo "[WARN] ${timestamp} $message" >> "$LOG_FILE"
 }
 
 log_error() {
     local message="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${RED}[ERROR]${NC} ${timestamp} $message" >&2
-    echo "[ERROR] ${timestamp} $message" >> "$LOG_FILE"
 }
 
 log_blue() {
     local message="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${BLUE}[INFO]${NC} ${timestamp} $message"
-    echo "[INFO] ${timestamp} $message" >> "$LOG_FILE"
 }
 
 log_purple() {
     local message="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${PURPLE}[STEP]${NC} ${timestamp} $message"
-    echo "[STEP] ${timestamp} $message" >> "$LOG_FILE"
 }
 
 log_success() {
     local message="$1"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${GREEN}[SUCCESS]${NC} ${timestamp} ✓ $message"
-    echo "[SUCCESS] ${timestamp} $message" >> "$LOG_FILE"
-}
-
-log_debug() {
-    local message="$1"
-    if [[ "${CONFIG[log_level]}" == "DEBUG" ]]; then
-        local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-        echo -e "${CYAN}[DEBUG]${NC} ${timestamp} $message"
-        echo "[DEBUG] ${timestamp} $message" >> "$LOG_FILE"
-    fi
-}
-
-# 配置管理函数
-load_config() {
-    if [[ -f "$CONFIG_FILE" ]]; then
-        source "$CONFIG_FILE"
-        log_debug "已加载配置文件: $CONFIG_FILE"
-    else
-        log_debug "配置文件不存在，使用默认配置"
-    fi
-}
-
-save_config() {
-    mkdir -p "$(dirname "$CONFIG_FILE")"
-    {
-        echo "# Docker Manager Configuration"
-        echo "# Generated on $(date)"
-        for key in "${!CONFIG[@]}"; do
-            echo "CONFIG[$key]=\"${CONFIG[$key]}\""
-        done
-    } > "$CONFIG_FILE"
-    log_debug "配置已保存到: $CONFIG_FILE"
 }
 
 # 检查是否为root用户
@@ -426,12 +387,10 @@ install_docker_menu() {
     log_info "     使用阿里云镜像源，适合国内网络"
     log_info "  4) 手动安装 (高级用户)"
     log_info "     分步骤手动安装Docker"
-    log_info "  5) 检查系统兼容性"
-    log_info "     检查系统是否支持Docker"
     echo
     log_blue "文档来源: https://dockerdocs.xuanyuan.me/install"
     echo
-    read -rp "请输入选择 (1-5，默认为1): " install_choice
+    read -rp "请输入选择 (1-4，默认为1): " install_choice
 
     case "${install_choice:-1}" in
         1)
@@ -445,9 +404,6 @@ install_docker_menu() {
             ;;
         4)
             install_docker_manual
-            ;;
-        5)
-            check_docker_compatibility
             ;;
         *)
             log_error "无效选择"
@@ -568,52 +524,6 @@ install_docker_centos_rhel() {
     # 启动并启用Docker
     systemctl start docker
     systemctl enable docker
-}
-
-# 检查Docker兼容性
-check_docker_compatibility() {
-    log_purple "检查Docker兼容性..."
-    
-    local issues=()
-    
-    # 检查内核版本
-    local kernel_version=$(uname -r | cut -d. -f1-2)
-    local required_version="3.10"
-    if [[ $(echo "$kernel_version $required_version" | awk '{print ($1 >= $2)}') -eq 0 ]]; then
-        issues+=("内核版本过低: $kernel_version (需要 >= $required_version)")
-    fi
-    
-    # 检查cgroup支持
-    if [[ ! -d /sys/fs/cgroup ]]; then
-        issues+=("系统不支持cgroup")
-    fi
-    
-    # 检查overlay2支持
-    if ! modprobe overlay2 2>/dev/null; then
-        issues+=("系统不支持overlay2存储驱动")
-    fi
-    
-    # 检查内存
-    local total_memory=$(free -m | awk 'NR==2{print $2}')
-    if [[ $total_memory -lt 1024 ]]; then
-        issues+=("内存不足: ${total_memory}MB (建议 >= 1GB)")
-    fi
-    
-    # 检查磁盘空间
-    local available_disk=$(df / | awk 'NR==2{print $4}')
-    if [[ $available_disk -lt 2097152 ]]; then  # 2GB in KB
-        issues+=("磁盘空间不足: $((available_disk/1024))MB (建议 >= 2GB)")
-    fi
-    
-    if [[ ${#issues[@]} -eq 0 ]]; then
-        log_success "系统兼容性检查通过，可以安装Docker"
-    else
-        log_warn "发现以下兼容性问题："
-        for issue in "${issues[@]}"; do
-            log_warn "  - $issue"
-        done
-        log_warn "建议解决这些问题后再安装Docker"
-    fi
 }
 
 # 安装后配置
@@ -1964,17 +1874,10 @@ show_menu() {
     echo "  12. 清理 Docker 系统"
     echo "  13. 配置 Docker 镜像加速器"
     echo "  14. 换国内源(apt/yum/dnf)"
-    echo "  15. 备份/恢复配置"
     echo
     echo "⚙️ 安装与卸载:"
-    echo "  16. 一键安装 Docker"
-    echo "  17. 完全卸载 Docker"
-    echo "  18. 系统兼容性检查"
-    echo
-    echo "🔧 高级功能:"
-    echo "  19. 脚本配置管理"
-    echo "  20. 查看日志文件"
-    echo "  21. 系统信息收集"
+    echo "  15. 一键安装 Docker"
+    echo "  16. 完全卸载 Docker"
     echo
     echo "  0. 退出脚本"
     echo "=================================================="
@@ -2389,294 +2292,18 @@ image_cleanup_optimize() {
     esac
 }
 
-backup_restore_config() {
-    log_purple "备份/恢复配置..."
-    
-    echo
-    log_info "选择操作："
-    log_info "  1) 备份Docker配置"
-    log_info "  2) 恢复Docker配置"
-    log_info "  3) 查看备份列表"
-    
-    local choice
-    read -rp "请选择操作 [1-3]: " choice
-    
-    case $choice in
-        1)
-            local backup_dir="./docker_backup_$(date +%Y%m%d_%H%M%S)"
-            mkdir -p "$backup_dir"
-            
-            log_info "备份Docker配置到: $backup_dir"
-            
-            # 备份daemon.json
-            if [[ -f /etc/docker/daemon.json ]]; then
-                cp /etc/docker/daemon.json "$backup_dir/"
-                log_info "已备份 daemon.json"
-            fi
-            
-            # 备份容器配置
-            docker ps -a --format "{{.Names}}" > "$backup_dir/containers.txt"
-            log_info "已备份容器列表"
-            
-            # 备份镜像列表
-            docker images --format "{{.Repository}}:{{.Tag}}" > "$backup_dir/images.txt"
-            log_info "已备份镜像列表"
-            
-            log_success "配置备份完成: $backup_dir"
-            ;;
-        2)
-            local backup_dir
-            read -rp "请输入备份目录路径: " backup_dir
-            if [[ -d "$backup_dir" ]]; then
-                log_info "从 $backup_dir 恢复配置..."
-                
-                if [[ -f "$backup_dir/daemon.json" ]]; then
-                    cp "$backup_dir/daemon.json" /etc/docker/
-                    systemctl restart docker
-                    log_success "已恢复 daemon.json"
-                fi
-                
-                log_success "配置恢复完成"
-            else
-                log_error "备份目录不存在: $backup_dir"
-            fi
-            ;;
-        3)
-            log_info "备份列表："
-            find . -name "docker_backup_*" -type d 2>/dev/null | head -10
-            ;;
-        *)
-            log_error "无效选择"
-            return 1
-            ;;
-    esac
-}
-
-script_config_management() {
-    log_purple "脚本配置管理..."
-    
-    echo
-    log_info "当前配置："
-    for key in "${!CONFIG[@]}"; do
-        echo "  $key: ${CONFIG[$key]}"
-    done
-    
-    echo
-    log_info "选择操作："
-    log_info "  1) 修改配置项"
-    log_info "  2) 重置为默认配置"
-    log_info "  3) 导入配置文件"
-    log_info "  4) 导出配置文件"
-    
-    local choice
-    read -rp "请选择操作 [1-4]: " choice
-    
-    case $choice in
-        1)
-            log_info "可配置的选项："
-            echo "  auto_confirm: 自动确认模式 (true/false)"
-            echo "  parallel_operations: 并行操作 (true/false)"
-            echo "  backup_before_clean: 清理前备份 (true/false)"
-            echo "  log_level: 日志级别 (INFO/DEBUG)"
-            
-            local config_key
-            read -rp "请输入配置项名称: " config_key
-            
-            if [[ -n "${CONFIG[$config_key]:-}" ]]; then
-                local current_value="${CONFIG[$config_key]}"
-                local new_value
-                read -rp "当前值: $current_value，请输入新值: " new_value
-                
-                if [[ -n "$new_value" ]]; then
-                    CONFIG[$config_key]="$new_value"
-                    save_config
-                    log_success "配置已更新: $config_key = $new_value"
-                fi
-            else
-                log_error "无效的配置项: $config_key"
-            fi
-            ;;
-        2)
-            if confirm_action "确认重置为默认配置？"; then
-                CONFIG=(
-                    ["auto_confirm"]="false"
-                    ["parallel_operations"]="true"
-                    ["backup_before_clean"]="true"
-                    ["log_level"]="INFO"
-                    ["max_log_size"]="100M"
-                )
-                save_config
-                log_success "配置已重置为默认值"
-            fi
-            ;;
-        3)
-            local config_file
-            read -rp "请输入配置文件路径: " config_file
-            if [[ -f "$config_file" ]]; then
-                source "$config_file"
-                save_config
-                log_success "配置已导入"
-            else
-                log_error "配置文件不存在: $config_file"
-            fi
-            ;;
-        4)
-            save_config
-            log_success "配置已导出到: $CONFIG_FILE"
-            ;;
-        *)
-            log_error "无效选择"
-            return 1
-            ;;
-    esac
-}
-
-view_log_file() {
-    log_purple "查看日志文件..."
-    
-    echo
-    log_info "日志文件: $LOG_FILE"
-    log_info "文件大小: $(du -h "$LOG_FILE" 2>/dev/null | cut -f1 || echo "未知")"
-    
-    echo
-    log_info "选择操作："
-    log_info "  1) 查看最新日志 (最后50行)"
-    log_info "  2) 查看完整日志"
-    log_info "  3) 实时监控日志"
-    log_info "  4) 清空日志文件"
-    
-    local choice
-    read -rp "请选择操作 [1-4]: " choice
-    
-    case $choice in
-        1)
-            tail -50 "$LOG_FILE" 2>/dev/null || log_warn "日志文件为空或不存在"
-            ;;
-        2)
-            cat "$LOG_FILE" 2>/dev/null || log_warn "日志文件不存在"
-            ;;
-        3)
-            log_info "实时监控日志 (按 Ctrl+C 退出)..."
-            tail -f "$LOG_FILE" 2>/dev/null || log_warn "日志文件不存在"
-            ;;
-        4)
-            if confirm_action "确认清空日志文件？"; then
-                > "$LOG_FILE"
-                log_success "日志文件已清空"
-            fi
-            ;;
-        *)
-            log_error "无效选择"
-            return 1
-            ;;
-    esac
-}
-
-collect_system_info() {
-    log_purple "系统信息收集..."
-    
-    local info_file="./system_info_$(date +%Y%m%d_%H%M%S).txt"
-    
-    log_info "收集系统信息到: $info_file"
-    
-    {
-        echo "================ 系统信息收集报告 ================"
-        echo "收集时间: $(date)"
-        echo "脚本版本: $SCRIPT_VERSION"
-        echo
-        
-        echo "================ 系统基本信息 ================"
-        echo "操作系统: $OS_TYPE"
-        echo "架构: $ARCH"
-        echo "主机名: $HOSTNAME"
-        echo "内核版本: $(uname -r)"
-        echo "系统负载: $(uptime)"
-        echo
-        
-        echo "================ 硬件信息 ================"
-        echo "CPU信息:"
-        lscpu | grep -E "Model name|CPU\(s\)|Thread|Core" || true
-        echo
-        echo "内存信息:"
-        free -h
-        echo
-        echo "磁盘信息:"
-        df -h
-        echo
-        
-        echo "================ Docker信息 ================"
-        if command_exists docker; then
-            echo "Docker版本:"
-            docker --version
-            echo
-            echo "Docker信息:"
-            docker info 2>/dev/null || echo "Docker服务未运行"
-            echo
-            echo "容器列表:"
-            docker ps -a
-            echo
-            echo "镜像列表:"
-            docker images
-        else
-            echo "Docker未安装"
-        fi
-        echo
-        
-        echo "================ 网络信息 ================"
-        echo "网络接口:"
-        ip addr show 2>/dev/null || ifconfig 2>/dev/null || echo "无法获取网络信息"
-        echo
-        echo "路由表:"
-        ip route 2>/dev/null || route -n 2>/dev/null || echo "无法获取路由信息"
-        echo
-        
-        echo "================ 进程信息 ================"
-        echo "Docker相关进程:"
-        ps aux | grep -i docker | grep -v grep || echo "无Docker进程"
-        echo
-        
-        echo "================ 服务状态 ================"
-        echo "Docker服务状态:"
-        systemctl status docker --no-pager -l 2>/dev/null || echo "无法获取Docker服务状态"
-        echo
-        
-        echo "================ 配置信息 ================"
-        echo "Docker配置:"
-        if [[ -f /etc/docker/daemon.json ]]; then
-            cat /etc/docker/daemon.json
-        else
-            echo "Docker配置文件不存在"
-        fi
-        echo
-        
-        echo "================ 日志信息 ================"
-        echo "Docker服务日志 (最后20行):"
-        journalctl -u docker --no-pager -n 20 2>/dev/null || echo "无法获取Docker服务日志"
-        echo
-        
-        echo "================ 报告结束 ================"
-    } > "$info_file"
-    
-    log_success "系统信息收集完成: $info_file"
-    log_info "文件大小: $(du -h "$info_file" | cut -f1)"
-}
-
 # 主程序入口
 main() {
-    # 加载配置
-    load_config
-    
     # 显示脚本信息
     log_info "Docker管理脚本 v${SCRIPT_VERSION} 启动"
     log_info "当前用户: $(whoami)"
     log_info "系统信息: $OS_TYPE $ARCH"
-    log_info "日志文件: $LOG_FILE"
 
     while true; do
         show_menu
 
         local choice
-        read -rp "请选择操作 [0-21]: " choice
+        read -rp "请选择操作 [0-16]: " choice
 
         echo
         case $choice in
@@ -2716,25 +2343,20 @@ main() {
                     log_error "无法检测操作系统类型"
                 fi
                 ;;
-            15) backup_restore_config ;;
-            16)
+            15)
                 check_root
                 install_docker_menu
                 ;;
-            17)
+            16)
                 check_root
                 uninstall_docker
                 ;;
-            18) check_docker_compatibility ;;
-            19) script_config_management ;;
-            20) view_log_file ;;
-            21) collect_system_info ;;
             0)
                 log_info "感谢使用Docker管理脚本，再见！"
                 exit 0
                 ;;
             *)
-                log_error "无效选择，请输入 0-21 之间的数字"
+                log_error "无效选择，请输入 0-16 之间的数字"
                 ;;
         esac
 
