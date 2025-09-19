@@ -808,19 +808,77 @@ select_containers() {
 stop_selected_containers() {
     log_purple "交互式选择停止运行中的容器..."
 
-    local selected_containers
-    selected_containers=$(select_containers "running" "运行中的容器列表")
-    [[ $? -ne 0 ]] && return 1
+    if ! command_exists docker; then
+        log_error "Docker未安装或未运行"
+        return 1
+    fi
+
+    local running_containers
+    running_containers=$(docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}" 2>/dev/null | grep -E "Up|running" || true)
+
+    if [[ -z "$running_containers" ]]; then
+        log_warn "没有正在运行的容器"
+        return 0
+    fi
+
+    # 显示运行中的容器列表
+    log_blue "=== 运行中的容器列表 ==="
+    local container_array=()
+    local i=1
+    
+    while IFS='|' read -r id name image status; do
+        container_array[i]="$id|$name|$image|$status"
+        printf "%3s %-20s %-30s %s\n" "$i" "$name" "$image" "$status"
+        i=$((i + 1))
+    done <<< "$running_containers"
+    log_blue "========================"
+
+    echo
+    log_info "选择方式："
+    log_info "  输入容器编号（空格分隔多个），例如: 1 3 5"
+    log_info "  输入 'all' 停止所有运行中的容器"
+    log_info "  输入 'q' 或直接回车退出"
+
+    local selection
+    read -rp "> " selection
+
+    if [[ -z "$selection" || "$selection" == "q" ]]; then
+        log_info "操作已取消"
+        return 0
+    fi
+
+    local selected_containers=""
+    if [[ "$selection" == "all" ]]; then
+        selected_containers=$(echo "$running_containers" | cut -d'|' -f1)
+    else
+        for num in $selection; do
+            if [[ "$num" =~ ^[0-9]+$ ]]; then
+                local container_info=$(echo "$running_containers" | sed -n "${num}p")
+                if [[ -n "$container_info" ]]; then
+                    local container_id=$(echo "$container_info" | cut -d'|' -f1)
+                    selected_containers+="$container_id\n"
+                else
+                    log_warn "无效编号: $num"
+                fi
+            else
+                log_warn "无效输入: $num"
+            fi
+        done
+        selected_containers=$(echo -e "$selected_containers" | sed '/^$/d')
+    fi
+
+    if [[ -z "$selected_containers" ]]; then
+        log_error "没有有效的容器被选中"
+        return 1
+    fi
 
     local container_ids=($selected_containers)
     local selected_count=${#container_ids[@]}
     
-    # 显示选中的容器
     log_info "已选择 $selected_count 个容器:"
     for container_id in "${container_ids[@]}"; do
         [[ -z "$container_id" ]] && continue
-        local container_info
-        container_info=$(docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}" --filter "id=$container_id" 2>/dev/null)
+        local container_info=$(docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}" --filter "id=$container_id" 2>/dev/null)
         if [[ -n "$container_info" ]]; then
             local name=$(echo "$container_info" | cut -d'|' -f2)
             echo "  - $name ($container_id)"
@@ -888,19 +946,77 @@ stop_container() {
 restart_selected_containers() {
     log_purple "交互式选择重启运行中的容器..."
 
-    local selected_containers
-    selected_containers=$(select_containers "running" "运行中的容器列表")
-    [[ $? -ne 0 ]] && return 1
+    if ! command_exists docker; then
+        log_error "Docker未安装或未运行"
+        return 1
+    fi
+
+    local running_containers
+    running_containers=$(docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}" 2>/dev/null | grep -E "Up|running" || true)
+
+    if [[ -z "$running_containers" ]]; then
+        log_warn "没有正在运行的容器"
+        return 0
+    fi
+
+    # 显示运行中的容器列表
+    log_blue "=== 运行中的容器列表 ==="
+    local container_array=()
+    local i=1
+    
+    while IFS='|' read -r id name image status; do
+        container_array[i]="$id|$name|$image|$status"
+        printf "%3s %-20s %-30s %s\n" "$i" "$name" "$image" "$status"
+        i=$((i + 1))
+    done <<< "$running_containers"
+    log_blue "========================"
+
+    echo
+    log_info "选择方式："
+    log_info "  输入容器编号（空格分隔多个），例如: 1 3 5"
+    log_info "  输入 'all' 重启所有运行中的容器"
+    log_info "  输入 'q' 或直接回车退出"
+
+    local selection
+    read -rp "> " selection
+
+    if [[ -z "$selection" || "$selection" == "q" ]]; then
+        log_info "操作已取消"
+        return 0
+    fi
+
+    local selected_containers=""
+    if [[ "$selection" == "all" ]]; then
+        selected_containers=$(echo "$running_containers" | cut -d'|' -f1)
+    else
+        for num in $selection; do
+            if [[ "$num" =~ ^[0-9]+$ ]]; then
+                local container_info=$(echo "$running_containers" | sed -n "${num}p")
+                if [[ -n "$container_info" ]]; then
+                    local container_id=$(echo "$container_info" | cut -d'|' -f1)
+                    selected_containers+="$container_id\n"
+                else
+                    log_warn "无效编号: $num"
+                fi
+            else
+                log_warn "无效输入: $num"
+            fi
+        done
+        selected_containers=$(echo -e "$selected_containers" | sed '/^$/d')
+    fi
+
+    if [[ -z "$selected_containers" ]]; then
+        log_error "没有有效的容器被选中"
+        return 1
+    fi
 
     local container_ids=($selected_containers)
     local selected_count=${#container_ids[@]}
     
-    # 显示选中的容器
     log_info "已选择 $selected_count 个容器:"
     for container_id in "${container_ids[@]}"; do
         [[ -z "$container_id" ]] && continue
-        local container_info
-        container_info=$(docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}" --filter "id=$container_id" 2>/dev/null)
+        local container_info=$(docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}" --filter "id=$container_id" 2>/dev/null)
         if [[ -n "$container_info" ]]; then
             local name=$(echo "$container_info" | cut -d'|' -f2)
             echo "  - $name ($container_id)"
@@ -913,7 +1029,6 @@ restart_selected_containers() {
         return 0
     fi
 
-    # 并行重启容器
     local commands=()
     for container_id in "${container_ids[@]}"; do
         [[ -z "$container_id" ]] && continue
@@ -948,6 +1063,8 @@ restart_selected_containers() {
         [[ $fail_count -gt 0 ]] && log_warn "失败: $fail_count"
     fi
 }
+
+
 
 # 重启单个容器
 restart_container() {
