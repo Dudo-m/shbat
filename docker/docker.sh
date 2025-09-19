@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Docker管理脚本 - 优化版
+# Docker管理脚本 - 优化版 v5.0.0
 # 作者: Docker管理助手
-# 版本: ${SCRIPT_VERSION}
+# 版本: 5.0.0
 # 描述: 一键式Docker环境管理工具，支持安装、配置、镜像管理等功能
+# 更新: 2024-12-19 - 代码重构、性能优化、功能增强
 
-#set -euo pipefail  # 严格模式：遇到错误立即退出
-set -uo pipefail
+set -euo pipefail  # 严格模式：遇到错误立即退出
 
 # ==================== 全局变量和配置 ====================
 
@@ -16,50 +16,118 @@ readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
 readonly BLUE='\033[0;34m'
 readonly PURPLE='\033[0;35m'
+readonly CYAN='\033[0;36m'
+readonly WHITE='\033[1;37m'
 readonly NC='\033[0m' # No Color
 
-# 脚本版本
-readonly SCRIPT_VERSION="4.1.1"
-
-# 脚本启动时的目录
+# 脚本版本和配置
+readonly SCRIPT_VERSION="5.0.0"
 readonly SCRIPT_START_DIR="$(pwd)"
+readonly LOG_FILE="/tmp/docker_manager_$(date +%Y%m%d_%H%M%S).log"
+readonly CONFIG_FILE="$HOME/.docker_manager.conf"
 
-# Docker Compose稳定版本（当GitHub API不可用时的备用版本）
+# Docker Compose稳定版本
 readonly COMPOSE_FALLBACK_VERSION="v2.24.6"
 
 # 国内可用的Docker镜像源（定期更新维护）
-readonly DOCKER_MIRRORS=(
-    "https://docker.1panel.live"
-    "https://docker.1ms.run"
-    "https://hub.rat.dev"
-    "https://docker.m.daocloud.io"
-    "https://mirror.ccs.tencentyun.com"
-    "https://reg-mirror.qiniu.com"
-    "https://registry-docker-hub-mirror.g.bhn.sh"
-    "https://docker.rainbond.cc"
-)
+DOCKER_MIRRORS[0]="https://docker.1panel.live"
+DOCKER_MIRRORS[1]="https://docker.1ms.run"
+DOCKER_MIRRORS[2]="https://hub.rat.dev"
+DOCKER_MIRRORS[3]="https://docker.m.daocloud.io"
+DOCKER_MIRRORS[4]="https://mirror.ccs.tencentyun.com"
+DOCKER_MIRRORS[5]="https://reg-mirror.qiniu.com"
+DOCKER_MIRRORS[6]="https://registry-docker-hub-mirror.g.bhn.sh"
+DOCKER_MIRRORS[7]="https://docker.rainbond.cc"
+DOCKER_MIRRORS[8]="https://dockerhub.azk8s.cn"
+DOCKER_MIRRORS[9]="https://reg-mirror.qiniu.com"
+
+# 系统信息
+readonly OS_TYPE=$(uname -s)
+readonly ARCH=$(uname -m)
+readonly HOSTNAME=$(hostname)
+
+# 配置变量
+declare -A CONFIG
+CONFIG["auto_confirm"]="false"
+CONFIG["parallel_operations"]="true"
+CONFIG["backup_before_clean"]="true"
+CONFIG["log_level"]="INFO"
+CONFIG["max_log_size"]="100M"
 
 # ==================== 日志和工具函数 ====================
 
-# 统一日志输出函数
+# 增强的日志系统
 log_info() {
-    echo -e "${GREEN}[INFO]${NC} $(date '+%H:%M:%S') $1"
+    local message="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${GREEN}[INFO]${NC} ${timestamp} $message"
+    echo "[INFO] ${timestamp} $message" >> "$LOG_FILE"
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $(date '+%H:%M:%S') $1"
+    local message="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${YELLOW}[WARN]${NC} ${timestamp} $message"
+    echo "[WARN] ${timestamp} $message" >> "$LOG_FILE"
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $(date '+%H:%M:%S') $1"
+    local message="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${RED}[ERROR]${NC} ${timestamp} $message" >&2
+    echo "[ERROR] ${timestamp} $message" >> "$LOG_FILE"
 }
 
 log_blue() {
-    echo -e "${BLUE}[INFO]${NC} $(date '+%H:%M:%S') $1"
+    local message="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${BLUE}[INFO]${NC} ${timestamp} $message"
+    echo "[INFO] ${timestamp} $message" >> "$LOG_FILE"
 }
 
 log_purple() {
-    echo -e "${PURPLE}[STEP]${NC} $(date '+%H:%M:%S') $1"
+    local message="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${PURPLE}[STEP]${NC} ${timestamp} $message"
+    echo "[STEP] ${timestamp} $message" >> "$LOG_FILE"
+}
+
+log_success() {
+    local message="$1"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "${GREEN}[SUCCESS]${NC} ${timestamp} ✓ $message"
+    echo "[SUCCESS] ${timestamp} $message" >> "$LOG_FILE"
+}
+
+log_debug() {
+    local message="$1"
+    if [[ "${CONFIG[log_level]}" == "DEBUG" ]]; then
+        local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+        echo -e "${CYAN}[DEBUG]${NC} ${timestamp} $message"
+        echo "[DEBUG] ${timestamp} $message" >> "$LOG_FILE"
+    fi
+}
+
+# 配置管理函数
+load_config() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        source "$CONFIG_FILE"
+        log_debug "已加载配置文件: $CONFIG_FILE"
+    else
+        log_debug "配置文件不存在，使用默认配置"
+    fi
+}
+
+save_config() {
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    {
+        echo "# Docker Manager Configuration"
+        echo "# Generated on $(date)"
+        for key in "${!CONFIG[@]}"; do
+            echo "CONFIG[$key]=\"${CONFIG[$key]}\""
+        done
+    } > "$CONFIG_FILE"
+    log_debug "配置已保存到: $CONFIG_FILE"
 }
 
 # 检查是否为root用户
@@ -89,23 +157,109 @@ detect_os() {
 
 # 检查网络连接
 check_network() {
-    if ! curl -s --connect-timeout 5 --max-time 10 https://www.baidu.com >/dev/null 2>&1; then
+    local test_urls=("https://www.baidu.com" "https://www.google.com" "https://www.cloudflare.com")
+    local success=false
+    
+    for url in "${test_urls[@]}"; do
+        if curl -s --connect-timeout 3 --max-time 5 "$url" >/dev/null 2>&1; then
+            success=true
+            break
+        fi
+    done
+    
+    if [[ "$success" == false ]]; then
         log_error "网络连接检查失败，请检查网络设置"
         return 1
     fi
 }
 
-# 确认操作函数
+# 增强的确认操作函数
 confirm_action() {
     local message="$1"
     local default="${2:-N}"
+    local timeout="${3:-0}"
 
-    if [[ "$default" == "Y" || "$default" == "y" ]]; then
-        read -rp "$message [Y/n]: " confirm
-        [[ -z "$confirm" || "$confirm" =~ ^[yY]$ ]]
+    # 如果启用了自动确认
+    if [[ "${CONFIG[auto_confirm]}" == "true" ]]; then
+        log_info "自动确认模式: $message"
+        [[ "$default" =~ ^[yY]$ ]]
+        return $?
+    fi
+
+    if [[ $timeout -gt 0 ]]; then
+        log_info "$message (${timeout}秒后自动选择默认值)"
+        if read -t "$timeout" -rp "$message [$([ "$default" =~ ^[yY]$ ] && echo "Y/n" || echo "y/N")]: " confirm; then
+            [[ -z "$confirm" || "$confirm" =~ ^[yY]$ ]]
+        else
+            log_info "超时，使用默认值: $default"
+            [[ "$default" =~ ^[yY]$ ]]
+        fi
     else
-        read -rp "$message [y/N]: " confirm
-        [[ "$confirm" =~ ^[yY]$ ]]
+        if [[ "$default" == "Y" || "$default" == "y" ]]; then
+            read -rp "$message [Y/n]: " confirm
+            [[ -z "$confirm" || "$confirm" =~ ^[yY]$ ]]
+        else
+            read -rp "$message [y/N]: " confirm
+            [[ "$confirm" =~ ^[yY]$ ]]
+        fi
+    fi
+}
+
+# 进度条显示
+show_progress() {
+    local current=$1
+    local total=$2
+    local width=50
+    local percentage=$((current * 100 / total))
+    local filled=$((current * width / total))
+    local empty=$((width - filled))
+    
+    printf "\r["
+    printf "%${filled}s" | tr ' ' '='
+    printf "%${empty}s" | tr ' ' ' '
+    printf "] %d%% (%d/%d)" "$percentage" "$current" "$total"
+}
+
+# 并行执行函数
+parallel_execute() {
+    local commands=("$@")
+    local pids=()
+    local results=()
+    
+    if [[ "${CONFIG[parallel_operations]}" == "true" ]]; then
+        for cmd in "${commands[@]}"; do
+            eval "$cmd" &
+            pids+=($!)
+        done
+        
+        for pid in "${pids[@]}"; do
+            wait "$pid"
+            results+=($?)
+        done
+    else
+        for cmd in "${commands[@]}"; do
+            eval "$cmd"
+            results+=($?)
+        done
+    fi
+    
+    return $((results[0]))
+}
+
+# 系统资源检查
+check_system_resources() {
+    local available_memory=$(free -m | awk 'NR==2{printf "%.0f", $7}')
+    local available_disk=$(df / | awk 'NR==2{print $4}')
+    
+    log_debug "可用内存: ${available_memory}MB"
+    log_debug "可用磁盘: ${available_disk}KB"
+    
+    if [[ $available_memory -lt 512 ]]; then
+        log_warn "可用内存不足512MB，可能影响Docker性能"
+    fi
+    
+    if [[ $available_disk -lt 1048576 ]]; then  # 1GB in KB
+        log_warn "可用磁盘空间不足1GB，可能影响Docker操作"
     fi
 }
 
@@ -244,13 +398,22 @@ EOF
 install_docker_menu() {
     log_purple "Docker 一键安装脚本..."
     
+    # 检查系统资源
+    check_system_resources
+    
     if command_exists docker; then
-        log_warn "Docker已安装，版本信息："
-        docker --version
+        local current_version=$(docker --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        log_warn "Docker已安装，当前版本: $current_version"
         if ! confirm_action "是否仍要运行安装脚本？"; then
             log_info "操作已取消"
             return 0
         fi
+    fi
+
+    # 检查网络连接
+    if ! check_network; then
+        log_error "网络连接失败，无法下载Docker安装脚本"
+        return 1
     fi
 
     echo
@@ -261,23 +424,30 @@ install_docker_menu() {
     log_info "     官方提供，国内可能访问慢"
     log_info "  3) 阿里云镜像安装"
     log_info "     使用阿里云镜像源，适合国内网络"
+    log_info "  4) 手动安装 (高级用户)"
+    log_info "     分步骤手动安装Docker"
+    log_info "  5) 检查系统兼容性"
+    log_info "     检查系统是否支持Docker"
     echo
     log_blue "文档来源: https://dockerdocs.xuanyuan.me/install"
     echo
-    read -rp "请输入选择 (1-3，默认为1): " install_choice
+    read -rp "请输入选择 (1-5，默认为1): " install_choice
 
     case "${install_choice:-1}" in
         1)
-            log_info "执行轩辕镜像一键配置脚本..."
-            bash <(curl -sSL https://xuanyuan.cloud/docker.sh)
+            install_docker_xuanyuan
             ;;
         2)
-            log_info "执行 Docker 官方安装脚本..."
-            curl -fsSL https://get.docker.com | bash -s docker
+            install_docker_official
             ;;
         3)
-            log_info "执行阿里云镜像安装脚本..."
-            curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun
+            install_docker_aliyun
+            ;;
+        4)
+            install_docker_manual
+            ;;
+        5)
+            check_docker_compatibility
             ;;
         *)
             log_error "无效选择"
@@ -287,11 +457,185 @@ install_docker_menu() {
 
     # 检查安装后Docker命令是否存在
     if command_exists docker; then
-        log_info "Docker 安装脚本执行完毕！"
+        log_success "Docker 安装完成！"
         docker --version
+        configure_docker_post_install
     else
         log_error "Docker 安装可能失败，请检查脚本输出。"
+        return 1
     fi
+}
+
+# 轩辕镜像安装
+install_docker_xuanyuan() {
+    log_info "执行轩辕镜像一键配置脚本..."
+    if curl -fsSL https://xuanyuan.cloud/docker.sh | bash; then
+        log_success "轩辕镜像安装完成"
+    else
+        log_error "轩辕镜像安装失败"
+        return 1
+    fi
+}
+
+# 官方安装
+install_docker_official() {
+    log_info "执行 Docker 官方安装脚本..."
+    if curl -fsSL https://get.docker.com | bash -s docker; then
+        log_success "官方安装完成"
+    else
+        log_error "官方安装失败"
+        return 1
+    fi
+}
+
+# 阿里云安装
+install_docker_aliyun() {
+    log_info "执行阿里云镜像安装脚本..."
+    if curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun; then
+        log_success "阿里云安装完成"
+    else
+        log_error "阿里云安装失败"
+        return 1
+    fi
+}
+
+# 手动安装
+install_docker_manual() {
+    log_purple "手动安装Docker..."
+    
+    local os_type
+    os_type=$(detect_os)
+    
+    case $os_type in
+        ubuntu|debian)
+            install_docker_ubuntu_debian
+            ;;
+        centos|rhel|fedora)
+            install_docker_centos_rhel
+            ;;
+        *)
+            log_error "不支持的操作系统: $os_type"
+            return 1
+            ;;
+    esac
+}
+
+# Ubuntu/Debian 手动安装
+install_docker_ubuntu_debian() {
+    log_info "在Ubuntu/Debian上安装Docker..."
+    
+    # 更新包索引
+    apt-get update
+    
+    # 安装必要的包
+    apt-get install -y \
+        ca-certificates \
+        curl \
+        gnupg \
+        lsb-release
+    
+    # 添加Docker官方GPG密钥
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    
+    # 设置仓库
+    echo \
+        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+        $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    
+    # 安装Docker Engine
+    apt-get update
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    
+    # 启动并启用Docker
+    systemctl start docker
+    systemctl enable docker
+}
+
+# CentOS/RHEL 手动安装
+install_docker_centos_rhel() {
+    log_info "在CentOS/RHEL上安装Docker..."
+    
+    # 安装必要的包
+    yum install -y yum-utils
+    
+    # 添加Docker仓库
+    yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+    
+    # 安装Docker Engine
+    yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    
+    # 启动并启用Docker
+    systemctl start docker
+    systemctl enable docker
+}
+
+# 检查Docker兼容性
+check_docker_compatibility() {
+    log_purple "检查Docker兼容性..."
+    
+    local issues=()
+    
+    # 检查内核版本
+    local kernel_version=$(uname -r | cut -d. -f1-2)
+    local required_version="3.10"
+    if [[ $(echo "$kernel_version $required_version" | awk '{print ($1 >= $2)}') -eq 0 ]]; then
+        issues+=("内核版本过低: $kernel_version (需要 >= $required_version)")
+    fi
+    
+    # 检查cgroup支持
+    if [[ ! -d /sys/fs/cgroup ]]; then
+        issues+=("系统不支持cgroup")
+    fi
+    
+    # 检查overlay2支持
+    if ! modprobe overlay2 2>/dev/null; then
+        issues+=("系统不支持overlay2存储驱动")
+    fi
+    
+    # 检查内存
+    local total_memory=$(free -m | awk 'NR==2{print $2}')
+    if [[ $total_memory -lt 1024 ]]; then
+        issues+=("内存不足: ${total_memory}MB (建议 >= 1GB)")
+    fi
+    
+    # 检查磁盘空间
+    local available_disk=$(df / | awk 'NR==2{print $4}')
+    if [[ $available_disk -lt 2097152 ]]; then  # 2GB in KB
+        issues+=("磁盘空间不足: $((available_disk/1024))MB (建议 >= 2GB)")
+    fi
+    
+    if [[ ${#issues[@]} -eq 0 ]]; then
+        log_success "系统兼容性检查通过，可以安装Docker"
+    else
+        log_warn "发现以下兼容性问题："
+        for issue in "${issues[@]}"; do
+            log_warn "  - $issue"
+        done
+        log_warn "建议解决这些问题后再安装Docker"
+    fi
+}
+
+# 安装后配置
+configure_docker_post_install() {
+    log_info "配置Docker安装后设置..."
+    
+    # 添加当前用户到docker组
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        usermod -aG docker "$SUDO_USER"
+        log_info "已将用户 $SUDO_USER 添加到docker组"
+    fi
+    
+    # 配置镜像加速器
+    if confirm_action "是否配置Docker镜像加速器？"; then
+        change_docker_mirror
+    fi
+    
+    # 启动Docker服务
+    systemctl start docker
+    systemctl enable docker
+    
+    log_success "Docker配置完成"
 }
 
 # ==================== Docker配置相关函数 ====================
@@ -461,25 +805,40 @@ EOF
 
 # ==================== 容器管理相关函数 ====================
 
-# 交互式选择并停止运行中的容器
-stop_selected_containers() {
-    log_purple "交互式选择停止运行中的容器..."
-
+# 通用容器选择函数
+select_containers() {
+    local filter="$1"  # 过滤器，如 "running", "exited", "all"
+    local title="$2"   # 标题
+    
     if ! command_exists docker; then
         log_error "Docker未安装或未运行"
         return 1
     fi
 
-    local running_containers
-    running_containers=$(docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}" 2>/dev/null | grep -E "Up\|running" || true)
+    local containers
+    case "$filter" in
+        "running")
+            containers=$(docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}" 2>/dev/null | grep -E "Up|running" || true)
+            ;;
+        "exited")
+            containers=$(docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}" 2>/dev/null | grep -E "Exited|Created" || true)
+            ;;
+        "all")
+            containers=$(docker ps -a --format "{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}" 2>/dev/null)
+            ;;
+        *)
+            log_error "无效的过滤器: $filter"
+            return 1
+            ;;
+    esac
 
-    if [[ -z "$running_containers" ]]; then
-        log_warn "没有运行中的容器"
-        return 0
+    if [[ -z "$containers" ]]; then
+        log_warn "没有找到符合条件的容器"
+        return 1
     fi
 
-    # 显示运行中的容器列表
-    log_blue "=== 运行中的容器列表 ==="
+    # 显示容器列表
+    log_blue "=== $title ==="
     local container_array=()
     local i=1
     
@@ -487,13 +846,13 @@ stop_selected_containers() {
         container_array[i]="$id|$name|$image|$status"
         printf "%-3s %-20s %-30s %s\n" "$i" "$name" "$image" "$status"
         i=$((i + 1))
-    done <<< "$running_containers"
+    done <<< "$containers"
     log_blue "========================"
 
     echo
     log_info "选择方式："
     log_info "  输入容器编号（空格分隔多个），例如: 1 3 5"
-    log_info "  输入 'all' 停止所有容器"
+    log_info "  输入 'all' 选择所有容器"
     log_info "  输入 'q' 或直接回车退出"
 
     local selection
@@ -501,21 +860,20 @@ stop_selected_containers() {
 
     if [[ -z "$selection" || "$selection" == "q" ]]; then
         log_info "操作已取消"
-        return 0
+        return 1
     fi
 
     local selected_containers=""
     if [[ "$selection" == "all" ]]; then
-        selected_containers=$(echo "$running_containers" | cut -d'|' -f1)
+        selected_containers=$(echo "$containers" | cut -d'|' -f1)
     else
         # 解析用户输入的编号
         for num in $selection; do
             if [[ "$num" =~ ^[0-9]+$ ]]; then
                 local container_info
-                container_info=$(echo "$running_containers" | sed -n "${num}p")
+                container_info=$(echo "$containers" | sed -n "${num}p")
                 if [[ -n "$container_info" ]]; then
                     local container_id=$(echo "$container_info" | cut -d'|' -f1)
-                    local container_name=$(echo "$container_info" | cut -d'|' -f2)
                     selected_containers+="$container_id\n"
                 else
                     log_warn "无效编号: $num"
@@ -532,13 +890,25 @@ stop_selected_containers() {
         return 1
     fi
 
-    # 显示选中的容器
-    local selected_count
-    selected_count=$(echo "$selected_containers" | wc -l)
-    log_info "已选择 $selected_count 个容器:"
-    
+    # 返回选中的容器ID列表
+    echo "$selected_containers"
+}
+
+# 交互式选择并停止运行中的容器
+stop_selected_containers() {
+    log_purple "交互式选择停止运行中的容器..."
+
+    local selected_containers
+    selected_containers=$(select_containers "running" "运行中的容器列表")
+    [[ $? -ne 0 ]] && return 1
+
     local container_ids=($selected_containers)
+    local selected_count=${#container_ids[@]}
+    
+    # 显示选中的容器
+    log_info "已选择 $selected_count 个容器:"
     for container_id in "${container_ids[@]}"; do
+        [[ -z "$container_id" ]] && continue
         local container_info
         container_info=$(docker ps --format "{{.ID}}|{{.Names}}|{{.Image}}" --filter "id=$container_id" 2>/dev/null)
         if [[ -n "$container_info" ]]; then
@@ -553,34 +923,55 @@ stop_selected_containers() {
         return 0
     fi
 
-    # 开始停止容器
-    local current=0
-    local success_count=0
-    local fail_count=0
-
+    # 并行停止容器
+    local commands=()
     for container_id in "${container_ids[@]}"; do
         [[ -z "$container_id" ]] && continue
-        current=$((current + 1))
-
-        local container_name
-        container_name=$(docker ps --format "{{.Names}}" --filter "id=$container_id" 2>/dev/null || echo "$container_id")
-
-        log_info "[$current/$selected_count] 正在停止: $container_name"
-
-        if docker stop "$container_id" >/dev/null 2>&1; then
-            log_info "✓ 停止成功: $container_name"
-            success_count=$((success_count + 1))
-        else
-            log_error "✗ 停止失败: $container_name"
-            fail_count=$((fail_count + 1))
-        fi
+        commands+=("stop_container '$container_id'")
     done
 
-    echo
-    log_info "=== 停止完成统计 ==="
-    log_info "总容器数: $selected_count"
-    log_info "成功: $success_count"
-    [[ $fail_count -gt 0 ]] && log_warn "失败: $fail_count"
+    if [[ "${CONFIG[parallel_operations]}" == "true" ]]; then
+        log_info "并行停止容器..."
+        parallel_execute "${commands[@]}"
+    else
+        # 顺序停止容器
+        local current=0
+        local success_count=0
+        local fail_count=0
+
+        for container_id in "${container_ids[@]}"; do
+            [[ -z "$container_id" ]] && continue
+            current=$((current + 1))
+            show_progress $current $selected_count
+
+            if stop_container "$container_id"; then
+                success_count=$((success_count + 1))
+            else
+                fail_count=$((fail_count + 1))
+            fi
+        done
+        echo  # 换行
+
+        log_info "=== 停止完成统计 ==="
+        log_info "总容器数: $selected_count"
+        log_info "成功: $success_count"
+        [[ $fail_count -gt 0 ]] && log_warn "失败: $fail_count"
+    fi
+}
+
+# 停止单个容器
+stop_container() {
+    local container_id="$1"
+    local container_name
+    container_name=$(docker ps --format "{{.Names}}" --filter "id=$container_id" 2>/dev/null || echo "$container_id")
+
+    if docker stop "$container_id" >/dev/null 2>&1; then
+        log_success "停止成功: $container_name"
+        return 0
+    else
+        log_error "停止失败: $container_name"
+        return 1
+    fi
 }
 
 # 交互式选择并删除容器
@@ -1470,62 +1861,757 @@ show_menu() {
     echo
     echo "================ Docker 管理脚本 v${SCRIPT_VERSION} ================"
     echo "在线文档: https://dockerdocs.xuanyuan.me/"
+    echo "系统信息: $OS_TYPE $ARCH | 主机: $HOSTNAME"
     echo
     echo "📋 Docker 状态管理:"
     echo "  1. 查看 Docker 详细状态"
     echo "  2. 查看容器日志"
+    echo "  3. 系统资源监控"
     echo
     echo "📦 容器管理:"
-    echo "  3. 选择启动容器"
-    echo "  4. 选择停止容器"
-    echo "  5. 选择删除容器"
+    echo "  4. 选择启动容器"
+    echo "  5. 选择停止容器"
+    echo "  6. 选择重启容器"
+    echo "  7. 选择删除容器"
+    echo "  8. 容器批量操作"
     echo
     echo "🏗️ 镜像管理:"
-    echo "  6. 选择导出镜像"
-    echo "  7. 从目录导入镜像"
+    echo "  9. 选择导出镜像"
+    echo "  10. 从目录导入镜像"
+    echo "  11. 镜像清理优化"
     echo
     echo "🛠️ 系统管理:"
-    echo "  8. 清理 Docker 系统"
-    echo "  9. 配置 Docker 镜像加速器"
-    echo "  10. 换国内源(apt/yum/dnf)"
+    echo "  12. 清理 Docker 系统"
+    echo "  13. 配置 Docker 镜像加速器"
+    echo "  14. 换国内源(apt/yum/dnf)"
+    echo "  15. 备份/恢复配置"
     echo
     echo "⚙️ 安装与卸载:"
-    echo "  11. 一键安装 Docker"
-    echo "  12. 完全卸载 Docker"
+    echo "  16. 一键安装 Docker"
+    echo "  17. 完全卸载 Docker"
+    echo "  18. 系统兼容性检查"
+    echo
+    echo "🔧 高级功能:"
+    echo "  19. 脚本配置管理"
+    echo "  20. 查看日志文件"
+    echo "  21. 系统信息收集"
     echo
     echo "  0. 退出脚本"
     echo "=================================================="
     echo
 }
 
+# 系统资源监控面板 - 重构版
+system_resource_monitor() {
+    log_purple "系统资源监控面板启动..."
+    
+    # 全局变量
+    local refresh_interval=20
+    local auto_refresh=true
+    local show_help=false
+    local first_run=true
+    
+    # 工具函数
+    safe_number() {
+        local num="$1"
+        local default="${2:-0}"
+        if [[ "$num" =~ ^[0-9.]+$ ]]; then
+            echo "$num" | cut -d. -f1
+        else
+            echo "$default"
+        fi
+    }
+    
+    format_bytes() {
+        local bytes="$1"
+        if [[ $bytes -gt 1073741824 ]]; then
+            echo "$((bytes / 1073741824))GB"
+        elif [[ $bytes -gt 1048576 ]]; then
+            echo "$((bytes / 1048576))MB"
+        elif [[ $bytes -gt 1024 ]]; then
+            echo "$((bytes / 1024))KB"
+        else
+            echo "${bytes}B"
+        fi
+    }
+    
+    create_bar() {
+        local current="$1"
+        local total="$2"
+        local width=20
+        local current_int=$(safe_number "$current")
+        local total_int=$(safe_number "$total" 1)
+        
+        if [[ $total_int -eq 0 ]]; then
+            total_int=1
+        fi
+        
+        local percentage=$((current_int * 100 / total_int))
+        local filled=$((current_int * width / total_int))
+        
+        if [[ $filled -gt $width ]]; then
+            filled=$width
+        fi
+        if [[ $filled -lt 0 ]]; then
+            filled=0
+        fi
+        
+        local empty=$((width - filled))
+        
+        printf "["
+        printf "%${filled}s" | tr ' ' '█'
+        printf "%${empty}s" | tr ' ' '░'
+        printf "] %d%%" "$percentage"
+    }
+    
+    # 获取系统信息
+    get_system_info() {
+        local hostname=$(hostname 2>/dev/null || echo "Unknown")
+        local kernel=$(uname -r 2>/dev/null || echo "Unknown")
+        local os_info=$(cat /etc/os-release 2>/dev/null | grep "PRETTY_NAME" | cut -d'"' -f2 || echo "Unknown")
+        local uptime_seconds=$(cat /proc/uptime 2>/dev/null | awk '{print $1}' | cut -d. -f1 || echo "0")
+        local uptime_days=$((uptime_seconds / 86400))
+        local uptime_hours=$(((uptime_seconds % 86400) / 3600))
+        local uptime_mins=$(((uptime_seconds % 3600) / 60))
+        local load_avg=$(uptime 2>/dev/null | awk -F'load average:' '{print $2}' | awk '{print $1}' | sed 's/,//' || echo "0.00")
+        
+        echo "$hostname|$kernel|$os_info|${uptime_days}|${uptime_hours}|${uptime_mins}|$load_avg"
+    }
+    
+    # 获取CPU信息
+    get_cpu_info() {
+        local cpu_usage=0
+        local cpu_cores=$(nproc 2>/dev/null || echo "1")
+        
+        # 尝试多种方法获取CPU使用率
+        if command -v top >/dev/null 2>&1; then
+            cpu_usage=$(top -bn1 2>/dev/null | grep "Cpu(s)" | awk '{print $2}' | awk -F'%' '{print $1}' | cut -d. -f1)
+        fi
+        
+        if [[ -z "$cpu_usage" ]] || [[ ! "$cpu_usage" =~ ^[0-9]+$ ]]; then
+            # 备用方法
+            if [[ -f /proc/stat ]]; then
+                local cpu_data=$(grep 'cpu ' /proc/stat 2>/dev/null)
+                if [[ -n "$cpu_data" ]]; then
+                    local idle=$(echo "$cpu_data" | awk '{print $5}')
+                    local total=$(echo "$cpu_data" | awk '{for(i=2;i<=NF;i++) total+=$i} END {print total}')
+                    if [[ $total -gt 0 ]]; then
+                        cpu_usage=$((100 - idle * 100 / total))
+                    fi
+                fi
+            fi
+        fi
+        
+        echo "$(safe_number "$cpu_usage")|$cpu_cores"
+    }
+    
+    # 获取内存信息
+    get_memory_info() {
+        if [[ -f /proc/meminfo ]]; then
+            local total=$(grep "MemTotal" /proc/meminfo | awk '{print $2}')
+            local available=$(grep "MemAvailable" /proc/meminfo | awk '{print $2}')
+            local used=$((total - available))
+            local percentage=0
+            
+            if [[ $total -gt 0 ]]; then
+                percentage=$((used * 100 / total))
+            fi
+            
+            echo "$total|$used|$available|$percentage"
+        else
+            echo "0|0|0|0"
+        fi
+    }
+    
+    # 获取磁盘信息
+    get_disk_info() {
+        local disk_info=$(df -h / 2>/dev/null | tail -1)
+        if [[ -n "$disk_info" ]]; then
+            local total=$(echo "$disk_info" | awk '{print $2}')
+            local used=$(echo "$disk_info" | awk '{print $3}')
+            local available=$(echo "$disk_info" | awk '{print $4}')
+            local percentage=$(echo "$disk_info" | awk '{print $5}' | sed 's/%//')
+            echo "$total|$used|$available|$(safe_number "$percentage")"
+        else
+            echo "0|0|0|0"
+        fi
+    }
+    
+    # 获取Docker信息
+    get_docker_info() {
+        if command -v docker >/dev/null 2>&1; then
+            local running=$(docker ps -q 2>/dev/null | wc -l)
+            local total=$(docker ps -aq 2>/dev/null | wc -l)
+            local images=$(docker images -q 2>/dev/null | wc -l)
+            local volumes=$(docker volume ls -q 2>/dev/null | wc -l)
+            echo "$running|$total|$images|$volumes"
+        else
+            echo "0|0|0|0"
+        fi
+    }
+    
+    # 显示帮助
+    show_help() {
+        echo -e "${CYAN}📖 快捷键帮助${NC}"
+        echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${GREEN}r${NC} - 手动刷新"
+        echo -e "  ${YELLOW}h${NC} - 显示/隐藏帮助"
+        echo -e "  ${BLUE}空格${NC} - 暂停/继续自动刷新"
+        echo -e "  ${RED}q${NC} - 退出监控"
+        echo -e "  ${PURPLE}Ctrl+C${NC} - 强制退出"
+        echo
+    }
+    
+    # 主显示函数
+    display_info() {
+        clear
+        
+        # 标题
+        echo -e "${PURPLE}╔══════════════════════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${PURPLE}║                           🖥️  系统资源监控面板                              ║${NC}"
+        echo -e "${PURPLE}╠══════════════════════════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${PURPLE}║ 按 ${GREEN}r${PURPLE} 刷新 | ${YELLOW}h${PURPLE} 帮助 | ${BLUE}空格${PURPLE} 暂停 | ${RED}q${PURPLE} 退出 | ${CYAN}Ctrl+C${PURPLE} 强制退出    ║${NC}"
+        echo -e "${PURPLE}╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
+        echo
+        
+        # 系统信息
+        local sys_info=$(get_system_info)
+        IFS='|' read -r hostname kernel os_info uptime_days uptime_hours uptime_mins load_avg <<< "$sys_info"
+        
+        echo -e "${BLUE}📊 系统信息${NC}"
+        echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${CYAN}主机:${NC} $hostname"
+        echo -e "  ${CYAN}系统:${NC} $os_info"
+        echo -e "  ${CYAN}内核:${NC} $kernel"
+        echo -e "  ${CYAN}运行:${NC} ${uptime_days}天 ${uptime_hours}小时 ${uptime_mins}分钟"
+        echo -e "  ${CYAN}负载:${NC} $load_avg"
+        echo
+        
+        # CPU信息
+        local cpu_info=$(get_cpu_info)
+        IFS='|' read -r cpu_usage cpu_cores <<< "$cpu_info"
+        local cpu_bar=$(create_bar "$cpu_usage" 100)
+        
+        echo -e "${BLUE}🔥 CPU使用率${NC}"
+        echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${CYAN}使用率:${NC} $cpu_bar ${cpu_usage}%"
+        echo -e "  ${CYAN}核心数:${NC} $cpu_cores"
+        echo
+        
+        # 内存信息
+        local mem_info=$(get_memory_info)
+        IFS='|' read -r total_kb used_kb available_kb mem_percentage <<< "$mem_info"
+        local total_mb=$((total_kb / 1024))
+        local used_mb=$((used_kb / 1024))
+        local available_mb=$((available_kb / 1024))
+        local mem_bar=$(create_bar "$mem_percentage" 100)
+        
+        echo -e "${BLUE}💾 内存使用${NC}"
+        echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${CYAN}使用率:${NC} $mem_bar ${mem_percentage}%"
+        echo -e "  ${CYAN}总内存:${NC} ${total_mb}MB"
+        echo -e "  ${CYAN}已使用:${NC} ${used_mb}MB"
+        echo -e "  ${CYAN}可用:${NC} ${available_mb}MB"
+        echo
+        
+        # 磁盘信息
+        local disk_info=$(get_disk_info)
+        IFS='|' read -r total_disk used_disk available_disk disk_percentage <<< "$disk_info"
+        local disk_bar=$(create_bar "$disk_percentage" 100)
+        
+        echo -e "${BLUE}💿 磁盘使用${NC}"
+        echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${CYAN}使用率:${NC} $disk_bar ${disk_percentage}%"
+        echo -e "  ${CYAN}总容量:${NC} $total_disk"
+        echo -e "  ${CYAN}已使用:${NC} $used_disk"
+        echo -e "  ${CYAN}可用:${NC} $available_disk"
+        echo
+        
+        # Docker信息
+        local docker_info=$(get_docker_info)
+        IFS='|' read -r running_containers total_containers image_count volume_count <<< "$docker_info"
+        
+        echo -e "${BLUE}🐳 Docker状态${NC}"
+        echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${CYAN}容器:${NC} 运行中 $running_containers / 总计 $total_containers"
+        echo -e "  ${CYAN}镜像:${NC} $image_count 个"
+        echo -e "  ${CYAN}数据卷:${NC} $volume_count 个"
+        echo
+        
+        # 显示运行中的容器
+        if [[ $running_containers -gt 0 ]] && command -v docker >/dev/null 2>&1; then
+            echo -e "${BLUE}📦 运行中的容器${NC}"
+            echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null | head -5
+            echo
+        fi
+        
+        # 状态栏
+        echo -e "${PURPLE}╔══════════════════════════════════════════════════════════════════════════════╗${NC}"
+        if [[ "$auto_refresh" == true ]]; then
+            echo -e "${PURPLE}║ 自动刷新: ${GREEN}开启${PURPLE} | 间隔: ${refresh_interval}秒 | 时间: $(date '+%H:%M:%S')                    ║${NC}"
+        else
+            echo -e "${PURPLE}║ 自动刷新: ${RED}暂停${PURPLE} | 间隔: ${refresh_interval}秒 | 时间: $(date '+%H:%M:%S')                    ║${NC}"
+        fi
+        echo -e "${PURPLE}╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
+        
+        # 显示帮助
+        if [[ "$show_help" == true ]]; then
+            show_help
+        fi
+    }
+    
+    # 主循环
+    while true; do
+        display_info
+        
+        # 非阻塞输入检测
+        if read -t "$refresh_interval" -n 1 input 2>/dev/null; then
+            case "$input" in
+                'r'|'R')
+                    # 手动刷新
+                    continue
+                    ;;
+                'h'|'H')
+                    # 切换帮助显示
+                    show_help=$([[ "$show_help" == true ]] && echo false || echo true)
+                    ;;
+                'q'|'Q')
+                    # 退出监控
+                    echo -e "\n${GREEN}监控已退出${NC}"
+                    return 0
+                    ;;
+                ' ')
+                    # 暂停/继续自动刷新
+                    auto_refresh=$([[ "$auto_refresh" == true ]] && echo false || echo true)
+                    ;;
+                *)
+                    # 无效输入，忽略
+                    ;;
+            esac
+        fi
+    done
+}
+
+container_batch_operations() {
+    log_purple "容器批量操作..."
+    
+    echo
+    log_info "选择批量操作类型："
+    log_info "  1) 批量启动所有已停止的容器"
+    log_info "  2) 批量停止所有运行中的容器"
+    log_info "  3) 批量重启所有运行中的容器"
+    log_info "  4) 批量删除所有已停止的容器"
+    log_info "  5) 批量清理无用的容器"
+    
+    local choice
+    read -rp "请选择操作 [1-5]: " choice
+    
+    case $choice in
+        1)
+            log_info "批量启动所有已停止的容器..."
+            local stopped_containers=$(docker ps -a --filter "status=exited" --format "{{.ID}}")
+            if [[ -n "$stopped_containers" ]]; then
+                echo "$stopped_containers" | xargs docker start
+                log_success "批量启动完成"
+            else
+                log_warn "没有已停止的容器"
+            fi
+            ;;
+        2)
+            log_info "批量停止所有运行中的容器..."
+            local running_containers=$(docker ps -q)
+            if [[ -n "$running_containers" ]]; then
+                echo "$running_containers" | xargs docker stop
+                log_success "批量停止完成"
+            else
+                log_warn "没有运行中的容器"
+            fi
+            ;;
+        3)
+            log_info "批量重启所有运行中的容器..."
+            local running_containers=$(docker ps -q)
+            if [[ -n "$running_containers" ]]; then
+                echo "$running_containers" | xargs docker restart
+                log_success "批量重启完成"
+            else
+                log_warn "没有运行中的容器"
+            fi
+            ;;
+        4)
+            log_info "批量删除所有已停止的容器..."
+            local stopped_containers=$(docker ps -a --filter "status=exited" --format "{{.ID}}")
+            if [[ -n "$stopped_containers" ]]; then
+                echo "$stopped_containers" | xargs docker rm
+                log_success "批量删除完成"
+            else
+                log_warn "没有已停止的容器"
+            fi
+            ;;
+        5)
+            log_info "批量清理无用的容器..."
+            docker container prune -f
+            log_success "批量清理完成"
+            ;;
+        *)
+            log_error "无效选择"
+            return 1
+            ;;
+    esac
+}
+
+image_cleanup_optimize() {
+    log_purple "镜像清理优化..."
+    
+    echo
+    log_info "选择清理类型："
+    log_info "  1) 删除悬挂镜像 (dangling images)"
+    log_info "  2) 删除未使用的镜像"
+    log_info "  3) 删除指定标签的镜像"
+    log_info "  4) 清理所有未使用的资源"
+    
+    local choice
+    read -rp "请选择操作 [1-4]: " choice
+    
+    case $choice in
+        1)
+            log_info "删除悬挂镜像..."
+            docker image prune -f
+            log_success "悬挂镜像清理完成"
+            ;;
+        2)
+            log_info "删除未使用的镜像..."
+            docker image prune -a -f
+            log_success "未使用镜像清理完成"
+            ;;
+        3)
+            log_info "删除指定标签的镜像..."
+            local image_name
+            read -rp "请输入镜像名称 (如: nginx): " image_name
+            if [[ -n "$image_name" ]]; then
+                docker rmi "$image_name" 2>/dev/null || log_warn "镜像不存在或无法删除"
+            fi
+            ;;
+        4)
+            log_info "清理所有未使用的资源..."
+            docker system prune -a -f --volumes
+            log_success "系统清理完成"
+            ;;
+        *)
+            log_error "无效选择"
+            return 1
+            ;;
+    esac
+}
+
+backup_restore_config() {
+    log_purple "备份/恢复配置..."
+    
+    echo
+    log_info "选择操作："
+    log_info "  1) 备份Docker配置"
+    log_info "  2) 恢复Docker配置"
+    log_info "  3) 查看备份列表"
+    
+    local choice
+    read -rp "请选择操作 [1-3]: " choice
+    
+    case $choice in
+        1)
+            local backup_dir="./docker_backup_$(date +%Y%m%d_%H%M%S)"
+            mkdir -p "$backup_dir"
+            
+            log_info "备份Docker配置到: $backup_dir"
+            
+            # 备份daemon.json
+            if [[ -f /etc/docker/daemon.json ]]; then
+                cp /etc/docker/daemon.json "$backup_dir/"
+                log_info "已备份 daemon.json"
+            fi
+            
+            # 备份容器配置
+            docker ps -a --format "{{.Names}}" > "$backup_dir/containers.txt"
+            log_info "已备份容器列表"
+            
+            # 备份镜像列表
+            docker images --format "{{.Repository}}:{{.Tag}}" > "$backup_dir/images.txt"
+            log_info "已备份镜像列表"
+            
+            log_success "配置备份完成: $backup_dir"
+            ;;
+        2)
+            local backup_dir
+            read -rp "请输入备份目录路径: " backup_dir
+            if [[ -d "$backup_dir" ]]; then
+                log_info "从 $backup_dir 恢复配置..."
+                
+                if [[ -f "$backup_dir/daemon.json" ]]; then
+                    cp "$backup_dir/daemon.json" /etc/docker/
+                    systemctl restart docker
+                    log_success "已恢复 daemon.json"
+                fi
+                
+                log_success "配置恢复完成"
+            else
+                log_error "备份目录不存在: $backup_dir"
+            fi
+            ;;
+        3)
+            log_info "备份列表："
+            find . -name "docker_backup_*" -type d 2>/dev/null | head -10
+            ;;
+        *)
+            log_error "无效选择"
+            return 1
+            ;;
+    esac
+}
+
+script_config_management() {
+    log_purple "脚本配置管理..."
+    
+    echo
+    log_info "当前配置："
+    for key in "${!CONFIG[@]}"; do
+        echo "  $key: ${CONFIG[$key]}"
+    done
+    
+    echo
+    log_info "选择操作："
+    log_info "  1) 修改配置项"
+    log_info "  2) 重置为默认配置"
+    log_info "  3) 导入配置文件"
+    log_info "  4) 导出配置文件"
+    
+    local choice
+    read -rp "请选择操作 [1-4]: " choice
+    
+    case $choice in
+        1)
+            log_info "可配置的选项："
+            echo "  auto_confirm: 自动确认模式 (true/false)"
+            echo "  parallel_operations: 并行操作 (true/false)"
+            echo "  backup_before_clean: 清理前备份 (true/false)"
+            echo "  log_level: 日志级别 (INFO/DEBUG)"
+            
+            local config_key
+            read -rp "请输入配置项名称: " config_key
+            
+            if [[ -n "${CONFIG[$config_key]:-}" ]]; then
+                local current_value="${CONFIG[$config_key]}"
+                local new_value
+                read -rp "当前值: $current_value，请输入新值: " new_value
+                
+                if [[ -n "$new_value" ]]; then
+                    CONFIG[$config_key]="$new_value"
+                    save_config
+                    log_success "配置已更新: $config_key = $new_value"
+                fi
+            else
+                log_error "无效的配置项: $config_key"
+            fi
+            ;;
+        2)
+            if confirm_action "确认重置为默认配置？"; then
+                CONFIG=(
+                    ["auto_confirm"]="false"
+                    ["parallel_operations"]="true"
+                    ["backup_before_clean"]="true"
+                    ["log_level"]="INFO"
+                    ["max_log_size"]="100M"
+                )
+                save_config
+                log_success "配置已重置为默认值"
+            fi
+            ;;
+        3)
+            local config_file
+            read -rp "请输入配置文件路径: " config_file
+            if [[ -f "$config_file" ]]; then
+                source "$config_file"
+                save_config
+                log_success "配置已导入"
+            else
+                log_error "配置文件不存在: $config_file"
+            fi
+            ;;
+        4)
+            save_config
+            log_success "配置已导出到: $CONFIG_FILE"
+            ;;
+        *)
+            log_error "无效选择"
+            return 1
+            ;;
+    esac
+}
+
+view_log_file() {
+    log_purple "查看日志文件..."
+    
+    echo
+    log_info "日志文件: $LOG_FILE"
+    log_info "文件大小: $(du -h "$LOG_FILE" 2>/dev/null | cut -f1 || echo "未知")"
+    
+    echo
+    log_info "选择操作："
+    log_info "  1) 查看最新日志 (最后50行)"
+    log_info "  2) 查看完整日志"
+    log_info "  3) 实时监控日志"
+    log_info "  4) 清空日志文件"
+    
+    local choice
+    read -rp "请选择操作 [1-4]: " choice
+    
+    case $choice in
+        1)
+            tail -50 "$LOG_FILE" 2>/dev/null || log_warn "日志文件为空或不存在"
+            ;;
+        2)
+            cat "$LOG_FILE" 2>/dev/null || log_warn "日志文件不存在"
+            ;;
+        3)
+            log_info "实时监控日志 (按 Ctrl+C 退出)..."
+            tail -f "$LOG_FILE" 2>/dev/null || log_warn "日志文件不存在"
+            ;;
+        4)
+            if confirm_action "确认清空日志文件？"; then
+                > "$LOG_FILE"
+                log_success "日志文件已清空"
+            fi
+            ;;
+        *)
+            log_error "无效选择"
+            return 1
+            ;;
+    esac
+}
+
+collect_system_info() {
+    log_purple "系统信息收集..."
+    
+    local info_file="./system_info_$(date +%Y%m%d_%H%M%S).txt"
+    
+    log_info "收集系统信息到: $info_file"
+    
+    {
+        echo "================ 系统信息收集报告 ================"
+        echo "收集时间: $(date)"
+        echo "脚本版本: $SCRIPT_VERSION"
+        echo
+        
+        echo "================ 系统基本信息 ================"
+        echo "操作系统: $OS_TYPE"
+        echo "架构: $ARCH"
+        echo "主机名: $HOSTNAME"
+        echo "内核版本: $(uname -r)"
+        echo "系统负载: $(uptime)"
+        echo
+        
+        echo "================ 硬件信息 ================"
+        echo "CPU信息:"
+        lscpu | grep -E "Model name|CPU\(s\)|Thread|Core" || true
+        echo
+        echo "内存信息:"
+        free -h
+        echo
+        echo "磁盘信息:"
+        df -h
+        echo
+        
+        echo "================ Docker信息 ================"
+        if command_exists docker; then
+            echo "Docker版本:"
+            docker --version
+            echo
+            echo "Docker信息:"
+            docker info 2>/dev/null || echo "Docker服务未运行"
+            echo
+            echo "容器列表:"
+            docker ps -a
+            echo
+            echo "镜像列表:"
+            docker images
+        else
+            echo "Docker未安装"
+        fi
+        echo
+        
+        echo "================ 网络信息 ================"
+        echo "网络接口:"
+        ip addr show 2>/dev/null || ifconfig 2>/dev/null || echo "无法获取网络信息"
+        echo
+        echo "路由表:"
+        ip route 2>/dev/null || route -n 2>/dev/null || echo "无法获取路由信息"
+        echo
+        
+        echo "================ 进程信息 ================"
+        echo "Docker相关进程:"
+        ps aux | grep -i docker | grep -v grep || echo "无Docker进程"
+        echo
+        
+        echo "================ 服务状态 ================"
+        echo "Docker服务状态:"
+        systemctl status docker --no-pager -l 2>/dev/null || echo "无法获取Docker服务状态"
+        echo
+        
+        echo "================ 配置信息 ================"
+        echo "Docker配置:"
+        if [[ -f /etc/docker/daemon.json ]]; then
+            cat /etc/docker/daemon.json
+        else
+            echo "Docker配置文件不存在"
+        fi
+        echo
+        
+        echo "================ 日志信息 ================"
+        echo "Docker服务日志 (最后20行):"
+        journalctl -u docker --no-pager -n 20 2>/dev/null || echo "无法获取Docker服务日志"
+        echo
+        
+        echo "================ 报告结束 ================"
+    } > "$info_file"
+    
+    log_success "系统信息收集完成: $info_file"
+    log_info "文件大小: $(du -h "$info_file" | cut -f1)"
+}
+
 # 主程序入口
 main() {
+    # 加载配置
+    load_config
+    
     # 显示脚本信息
     log_info "Docker管理脚本 v${SCRIPT_VERSION} 启动"
     log_info "当前用户: $(whoami)"
-    log_info "系统信息: $(uname -sr)"
+    log_info "系统信息: $OS_TYPE $ARCH"
+    log_info "日志文件: $LOG_FILE"
 
     while true; do
         show_menu
 
         local choice
-        read -rp "请选择操作 [0-12]: " choice
+        read -rp "请选择操作 [0-21]: " choice
 
         echo
         case $choice in
             1) show_docker_status ;;
             2) view_container_logs ;;
-            3) start_selected_containers ;;
-            4) stop_selected_containers ;;
-            5) remove_selected_containers ;;
-            6) export_selected_images ;;
-            7) import_images_from_dir ;;
-            8) clean_docker_system ;;
-            9)
+            3) system_resource_monitor ;;
+            4) start_selected_containers ;;
+            5) stop_selected_containers ;;
+            6) restart_selected_containers ;;
+            7) remove_selected_containers ;;
+            8) container_batch_operations ;;
+            9) export_selected_images ;;
+            10) import_images_from_dir ;;
+            11) image_cleanup_optimize ;;
+            12) clean_docker_system ;;
+            13)
                 check_root
                 change_docker_mirror
                 ;;
-            10)
+            14)
                 check_root
                 local os_type
                 os_type=$(detect_os)
@@ -1545,20 +2631,25 @@ main() {
                     log_error "无法检测操作系统类型"
                 fi
                 ;;
-            11)
+            15) backup_restore_config ;;
+            16)
                 check_root
                 install_docker_menu
                 ;;
-            12)
+            17)
                 check_root
                 uninstall_docker
                 ;;
+            18) check_docker_compatibility ;;
+            19) script_config_management ;;
+            20) view_log_file ;;
+            21) collect_system_info ;;
             0)
                 log_info "感谢使用Docker管理脚本，再见！"
                 exit 0
                 ;;
             *)
-                log_error "无效选择，请输入 0-12 之间的数字"
+                log_error "无效选择，请输入 0-21 之间的数字"
                 ;;
         esac
 
