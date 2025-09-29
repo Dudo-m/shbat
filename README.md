@@ -29,6 +29,11 @@ bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master
 bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/email/email-centos.sh)
 ```
 
+#### 自签证书生成
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/cert/cert.sh)
+```
+
 ### 📁 目录结构
 
 ```
@@ -40,6 +45,8 @@ shbat/
 │   └── email-centos.sh  # CentOS 邮件服务器配置
 ├── vpn/                 # VPN 服务脚本
 │   └── vpn-centos.sh    # CentOS/RHEL/Fedora VPN 配置
+├── cert/                # 证书生成脚本
+│   └── cert.sh          # 自签SSL证书生成工具
 ├── README.md            # 本文件
 └── README-gitee.md      # Gitee 专用说明
 ```

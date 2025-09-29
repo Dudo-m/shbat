@@ -33,6 +33,12 @@ bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/vpn/vpn-centos.sh)
 bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/email/email-centos.sh)
 ```
 
+#### 自签证书生成
+**Gitee:**
+```bash
+bash <(curl -Ls https://gitee.com/LI_li_plus/shbat/raw/master/cert/cert.sh)
+```
+
 ### 📁 目录结构
 
 ```
@@ -44,6 +50,8 @@ shbat/
 │   └── email-centos.sh  # CentOS 邮件服务器配置
 ├── vpn/                 # VPN 服务脚本
 │   └── vpn-centos.sh    # CentOS/RHEL/Fedora VPN 配置
+├── cert/                # 证书生成脚本
+│   └── cert.sh          # 自签SSL证书生成工具
 ├── README.md            # GitHub 版说明
 └── README-gitee.md      # Gitee 专用说明 (本文件)
 ```
