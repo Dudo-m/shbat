@@ -190,34 +190,39 @@ EOF
 
     echo "   ✓ P12 证书生成完成: server.p12, client.p12"
 
-    # 5. 生成 JKS 格式证书
-    echo "5. 生成 JKS 格式证书..."
-    # 检查 keytool 是否可用
-    if ! command -v keytool &> /dev/null; then
-        echo "   ⚠ 警告: 未找到 keytool 命令"
-        echo ""
-        echo "   安装 Java JDK 方法:"
-        echo "   Ubuntu/Debian: sudo apt-get install openjdk-11-jdk"
-        echo "   CentOS/RHEL:   sudo yum install java-11-openjdk-devel"
-        echo "   Alpine:        apk add openjdk11"
-        echo "   macOS:         brew install openjdk@11"
-        echo ""
-        echo "   或者直接使用已生成的 P12 文件，P12 格式在 Java 中同样被广泛支持"
-        echo "   Java 代码示例: KeyStore.getInstance(\"PKCS12\")"
-    else
-        # 从 P12 转换为 JKS - Server
-        keytool -importkeystore -srckeystore server.p12 -srcstoretype PKCS12 -srcstorepass ${P12_PASSWORD} \
-            -destkeystore server.jks -deststoretype JKS -deststorepass ${JKS_PASSWORD} -noprompt 2>/dev/null
+    # 5. 可选：生成 JKS 格式证书
+    jks_generated=0
+    read -p "是否需要生成 JKS 格式证书? (y/n, 默认: n): " choice_jks
+    if [[ "$choice_jks" =~ ^[Yy]$ ]]; then
+        echo "5. 生成 JKS 格式证书..."
+        # 检查 keytool 是否可用
+        if ! command -v keytool &> /dev/null; then
+            echo "   ⚠ 警告: 未找到 keytool 命令"
+            echo ""
+            echo "   安装 Java JDK 方法:"
+            echo "   Ubuntu/Debian: sudo apt-get install openjdk-11-jdk"
+            echo "   CentOS/RHEL:   sudo yum install java-11-openjdk-devel"
+            echo "   Alpine:        apk add openjdk11"
+            echo "   macOS:         brew install openjdk@11"
+            echo ""
+            echo "   或者直接使用已生成的 P12 文件，P12 格式在 Java 中同样被广泛支持"
+            echo "   Java 代码示例: KeyStore.getInstance(\"PKCS12\")"
+        else
+            # 从 P12 转换为 JKS - Server
+            keytool -importkeystore -srckeystore server.p12 -srcstoretype PKCS12 -srcstorepass ${P12_PASSWORD} \
+                -destkeystore server.jks -deststoretype JKS -deststorepass ${JKS_PASSWORD} -noprompt 2>/dev/null
 
-        # 从 P12 转换为 JKS - Client
-        keytool -importkeystore -srckeystore client.p12 -srcstoretype PKCS12 -srcstorepass ${P12_PASSWORD} \
-            -destkeystore client.jks -deststoretype JKS -deststorepass ${JKS_PASSWORD} -noprompt 2>/dev/null
+            # 从 P12 转换为 JKS - Client
+            keytool -importkeystore -srckeystore client.p12 -srcstoretype PKCS12 -srcstorepass ${P12_PASSWORD} \
+                -destkeystore client.jks -deststoretype JKS -deststorepass ${JKS_PASSWORD} -noprompt 2>/dev/null
 
-        # 创建 Truststore (只包含 CA 证书)
-        keytool -importcert -file ca.crt -keystore truststore.jks -storepass ${JKS_PASSWORD} \
-            -alias ca -noprompt 2>/dev/null
+            # 创建 Truststore (只包含 CA 证书)
+            keytool -importcert -file ca.crt -keystore truststore.jks -storepass ${JKS_PASSWORD} \
+                -alias ca -noprompt 2>/dev/null
 
-        echo "   ✓ JKS 证书生成完成: server.jks, client.jks, truststore.jks"
+            echo "   ✓ JKS 证书生成完成: server.jks, client.jks, truststore.jks"
+            jks_generated=1
+        fi
     fi
 
     # 6. 清理临时文件
@@ -238,7 +243,7 @@ EOF
     echo "    - server.key (Server 私钥)"
     echo "    - server.csr (Server 证书签名请求)"
     echo "    - server.p12 (Server PKCS#12 格式)"
-    if command -v keytool &> /dev/null; then
+    if [ $jks_generated -eq 1 ]; then
         echo "    - server.jks (Server Java KeyStore)"
     fi
     echo ""
@@ -247,7 +252,7 @@ EOF
     echo "    - client.key (Client 私钥)"
     echo "    - client.csr (Client 证书签名请求)"
     echo "    - client.p12 (Client PKCS#12 格式)"
-    if command -v keytool &> /dev/null; then
+    if [ $jks_generated -eq 1 ]; then
         echo "    - client.jks (Client Java KeyStore)"
         echo "    - truststore.jks (信任库)"
     fi
