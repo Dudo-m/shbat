@@ -8,27 +8,27 @@ set -e
 # ============ 配置参数 ============
 # CA 配置
 CA_DAYS=3650
-CA_COUNTRY="CN"
-CA_STATE="Beijing"
-CA_CITY="Beijing"
+CA_COUNTRY="US"
+CA_STATE="Anonymous"
+CA_CITY="Local CA"
 CA_ORG="MyCompany"
 CA_ORG_UNIT="IT Department"
 CA_COMMON_NAME="MyCompany Root CA"
 
 # Server 证书配置
 SERVER_DAYS=365
-SERVER_COUNTRY="CN"
-SERVER_STATE="Beijing"
-SERVER_CITY="Beijing"
+SERVER_COUNTRY="US"
+SERVER_STATE="Internal"
+SERVER_CITY="Dev Server"
 SERVER_ORG="MyCompany"
 SERVER_ORG_UNIT="IT Department"
 SERVER_COMMON_NAME="localhost"
 
 # Client 证书配置
 CLIENT_DAYS=365
-CLIENT_COUNTRY="CN"
-CLIENT_STATE="Beijing"
-CLIENT_CITY="Beijing"
+CLIENT_COUNTRY="US"
+CLIENT_STATE="Internal"
+CLIENT_CITY="Client Unit"
 CLIENT_ORG="MyCompany"
 CLIENT_ORG_UNIT="IT Department"
 CLIENT_COMMON_NAME="client"
