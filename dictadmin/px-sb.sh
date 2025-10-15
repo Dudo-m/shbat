@@ -49,7 +49,8 @@ get_user_info() {
     # 输入密码
     read -p "请输入连接密码 (默认: 随机生成): " PASSWORD
     if [ -z "$PASSWORD" ]; then
-        PASSWORD=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)
+        # 使用更简单的方法生成随机密码，避免fork失败
+        PASSWORD=$(date +%s%N | md5sum 2>/dev/null | cut -c1-16 || echo "$(date +%s)${RANDOM}" | md5sum 2>/dev/null | cut -c1-16 || echo "Pass$(date +%s)")
     fi
 
     # 检测公网IP
