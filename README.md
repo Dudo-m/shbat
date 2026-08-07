@@ -51,6 +51,14 @@
   python3 net_tool.py --help
   ```
 
+- Sub-Store 节点 GeoIP 自动改名
+  - 在 Sub-Store 中新建「脚本操作 → 重命名」脚本，填入：
+    ```text
+    https://raw.githubusercontent.com/Dudo-m/shbat/refs/heads/master/substore/geoip-rename.js
+    ```
+  - 功能：自动探测节点 IP 归属地，重命名为 `国家|地区|协议|编号|原始名称`
+  - 示例：`日本|东京|tuic|01|Oracel-tuic-instance-20260719-2025`
+
 ### 📌 gs-netcat 说明
 
 - 二进制请从上游下载：https://github.com/hackerschoice/gsocket/releases
@@ -66,6 +74,7 @@ shbat/
 ├── cert/         # 自签证书脚本
 ├── dictadmin/    # 轻量代理脚本
 ├── udptcp-py/    # Python 网络测试工具
+├── substore/     # Sub-Store 节点 GeoIP 自动改名脚本
 ├── gs-netcat/    # gs-netcat 使用示例脚本
 ```
 
