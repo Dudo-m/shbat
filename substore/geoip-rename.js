@@ -1,5 +1,5 @@
 /**
- * Sub-Store GeoIP 自动改名 (精简清爽版)
+ * Sub-Store GeoIP 自动改名 (稳定无错版)
  *
  * 格式: 国家 | 城市 | 原名称 (若无城市则自动为: 国家 | 原名称)
  */
@@ -18,49 +18,75 @@ function isIP(ip) {
   return isV4 || isV6;
 }
 
+// 支持双 DNS 厂商解析 (Google / Cloudflare)
 async function resolveIP(host) {
   if (!host) return "";
   if (isIP(host)) return host;
 
-  try {
-    const types = ["A", "AAAA"];
-    for (let type of types) {
-      let r = await fetch(`https://dns.google/resolve?name=${host}&type=${type}`);
-      let j = await r.json();
+  const dnsProviders = [
+    "https://dns.google/resolve",
+    "https://cloudflare-dns.com/dns-query"
+  ];
 
-      if (j.Answer) {
-        for (let a of j.Answer) {
-          if (a.data && isIP(a.data)) {
-            return a.data;
+  for (let dns of dnsProviders) {
+    try {
+      for (let type of ["A", "AAAA"]) {
+        let r = await fetch(`${dns}?name=${host}&type=${type}`, {
+          headers: { "Accept": "application/dns-json" }
+        });
+        let j = await r.json();
+
+        if (j.Answer) {
+          for (let a of j.Answer) {
+            if (a.data && isIP(a.data)) {
+              return a.data;
+            }
           }
         }
       }
-    }
-  } catch (e) {}
+    } catch (e) {}
+  }
 
   return "";
 }
 
+// 移除容易报 403 的 ip.sb，换用高兼容性 GeoIP API
 async function geo(ip) {
   let apis = [
-    `http://ip-api.com/json/${ip}?lang=zh-CN`,
-    `https://api.ip.sb/geoip/${ip}`,
-    `https://ipwho.is/${ip}`,
+    // 1. ipwho.is：支持 HTTPS / 中文，无 CF 防护拦截
+    `https://ipwho.is/${ip}?lang=zh-CN`,
+    // 2. freeipapi.com：API 专属，极速无拦截
+    `https://freeipapi.com/api/json/${ip}`,
+    // 3. ipapi.co：高精度兜底
     `https://ipapi.co/${ip}/json/`
   ];
 
   for (let api of apis) {
     try {
-      let r = await fetch(api);
+      let r = await fetch(api, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+        }
+      });
       let d = await r.json();
 
-      if (d.status === "success" && d.countryCode) {
+      // 1. ipwho.is 响应格式
+      if (d.success && d.country_code) {
         return {
-          country: d.countryCode,
+          country: d.country_code,
           city: d.city || ""
         };
       }
 
+      // 2. freeipapi.com 响应格式
+      if (d.countryCode) {
+        return {
+          country: d.countryCode,
+          city: d.cityName || ""
+        };
+      }
+
+      // 3. ipapi.co 响应格式
       if (d.country_code) {
         return {
           country: d.country_code,
@@ -89,7 +115,7 @@ async function operator(proxies) {
       let city = info.city || "";
       let old = node.name || "";
 
-      // 优雅拼接：自动剔除空字段并用 " | " 分隔
+      // 自动剔除空字段并用 " | " 分隔
       node.name = [country, city, old].filter(Boolean).join(" | ");
 
     } catch (e) {}
