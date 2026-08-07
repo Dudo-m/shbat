@@ -40,10 +40,10 @@ async function resolveIP(host){
     return host;
 
   const dohList = [
-    `https://dns.google/resolve?name=${host}`,
-    `https://223.5.5.5/resolve?name=${host}&type=A`,   // 阿里 DNS
-    `https://doh.pub/dns-query?name=${host}&type=A`,   // DNSPod
-    `https://1.1.1.1/dns-query?name=${host}&type=A&ct=application/dns-json` // Cloudflare
+    `https://223.5.5.5/resolve?name=${host}&type=A`,   // 阿里 DNS（实测可用）
+    `https://doh.pub/dns-query?name=${host}&type=A`,   // DNSPod（实测可用）
+    `https://dns.google/resolve?name=${host}`,         // 兜底
+    `https://1.1.1.1/dns-query?name=${host}&type=A&ct=application/dns-json` // 兜底
   ];
 
   for(let url of dohList){
@@ -81,7 +81,22 @@ async function resolveIP(host){
 // Geo查询：多源兜底，优先返回中文
 async function geo(ip){
 
+  // ip-api.com 免费版实测可用，15次/分钟限流，作为主源
+  // 失败(限流/超时)时退到备用源
   const sources = [
+
+    { // 主源：免费，支持 lang=zh-CN（注意：免费版仅 HTTP，勿改 https）
+      url: `http://ip-api.com/json/${ip}?lang=zh-CN&fields=status,countryCode,country,city`,
+      parse: (d)=>{
+        if(d.status !== "success")
+          throw new Error("fail");
+        return {
+          cc:d.countryCode || "",
+          country:d.country || "",
+          city:d.city || ""
+        };
+      }
+    },
 
     { // 国内可用，直接返回中文
       url: `https://ip.useragentinfo.com/json?ip=${ip}`,
@@ -112,19 +127,27 @@ async function geo(ip){
 
   ];
 
-  for(let s of sources){
+  // 主源失败时最多重试 2 次（限流返回后稍等再试）
+  for(let attempt = 0; attempt < 3; attempt++){
 
-    try{
+    for(let s of sources){
 
-      let d = await (await fetch(s.url)).json();
+      try{
 
-      let r = s.parse(d);
+        let d = await (await fetch(s.url)).json();
 
-      // 只要拿到国家信息就算成功
-      if(r.country || r.cc)
-        return r;
+        let r = s.parse(d);
 
-    }catch(e){}
+        // 只要拿到国家信息就算成功
+        if(r.country || r.cc)
+          return r;
+
+      }catch(e){}
+
+    }
+
+    // 全部失败：等 3.5 秒再试一轮（规避 ip-api 每分钟 15 次限流）
+    await new Promise(r=>setTimeout(r, 3500));
 
   }
 
@@ -169,6 +192,10 @@ async function operator(proxies){
         continue;
 
 
+      // 每节点随机延迟 3~6 秒，规避 ip-api 每分钟 15 次限流
+      await new Promise(r=>setTimeout(r, 3000 + Math.floor(Math.random()*3000)));
+
+
       let info =
         await geo(ip);
 
@@ -202,8 +229,9 @@ async function operator(proxies){
 
 
 
+      // 用最终显示的国家 + 城市分组编号（统一用中文国家名，避免不同源 cc 不一致）
       let key =
-        cc + city;
+        country + city;
 
 
 
