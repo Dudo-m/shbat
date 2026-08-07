@@ -1,16 +1,13 @@
 /**
- * Sub-Store 节点 GeoIP 自动改名
+ * Sub-Store GeoIP 自动改名
  *
  * 格式:
  * 国家|城市|协议|编号|原名称
- *
- * 示例:
- * 日本|东京|tuic|01|Oracle-tuic
- * 美国|Los Angeles|vmess|01|server-us
  */
 
 
 const countryCN = {
+
   US:"美国",
   JP:"日本",
   SG:"新加坡",
@@ -27,70 +24,71 @@ const countryCN = {
   IN:"印度",
   BR:"巴西",
   TR:"土耳其"
+
 };
 
 
-// IPv4
-const IPV4_RE =
-    /^(?:\d{1,3}\.){3}\d{1,3}$/;
+
+function isIP(ip){
+
+  return /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(ip);
+
+}
 
 
 
-// DNS解析
+
+// DNS只负责解析IP
 async function resolveIP(host){
+
 
   if(!host)
     return "";
 
 
-  // 已经是IP
-  if(IPV4_RE.test(host))
+  if(isIP(host))
     return host;
 
 
 
-  const urls = [
-
-    `https://223.5.5.5/resolve?name=${host}&type=A`,
-
-    `https://dns.google/resolve?name=${host}&type=A`
-
-  ];
+  try{
 
 
+    let r =
+        await fetch(
+            "https://dns.google/resolve?name="
+            +host
+            +"&type=A"
+        );
 
-  for(const url of urls){
 
-    try{
-
-      let res =
-          await fetch(url);
-
-
-      let json =
-          await res.json();
+    let j =
+        await r.json();
 
 
 
-      if(json.Answer){
+    if(j.Answer){
 
-        for(let a of json.Answer){
 
-          if(
-              a.data &&
-              IPV4_RE.test(a.data)
-          ){
-            return a.data;
-          }
+      for(let a of j.Answer){
 
-        }
+
+        if(
+            a.data &&
+            isIP(a.data)
+        )
+          return a.data;
+
 
       }
 
 
-    }catch(e){}
+    }
 
-  }
+
+
+  }catch(e){}
+
 
 
   return "";
@@ -99,81 +97,100 @@ async function resolveIP(host){
 
 
 
-// GeoIP查询
-async function geoLookup(ipList){
 
-
-  let result = {};
-
-
-  if(ipList.length===0)
-    return result;
+// 多GeoIP查询
+async function geo(ip){
 
 
 
-  try{
+  let apis=[
 
 
-    let res =
-        await fetch(
-            "https://ip-api.com/batch?lang=zh-CN&fields=status,countryCode,country,city",
-            {
-              method:"POST",
-              headers:{
-                "Content-Type":"application/json"
-              },
-              body:
-                  JSON.stringify(
-                      ipList.map(ip=>({
-                        query:ip
-                      }))
-                  )
-            }
-        );
+    "https://ipwho.is/"+ip,
 
 
-    let arr =
-        await res.json();
+    "https://ipapi.co/"+ip+"/json/",
+
+
+    "https://freeipapi.com/api/json/"+ip
+
+
+  ];
 
 
 
-    ipList.forEach(
-        (ip,i)=>{
+  for(let api of apis){
 
 
-          let d =
-              arr[i];
+    try{
 
 
-          if(
-              d &&
-              d.status==="success"
-          ){
-
-            result[ip]={
-              cc:
-                  d.countryCode || "",
-
-              country:
-                  d.country || "",
-
-              city:
-                  d.city || ""
-            };
-
-          }
+      let r =
+          await fetch(api);
 
 
-        }
-    );
+      let d =
+          await r.json();
 
 
 
-  }catch(e){}
+// ipwho
+
+      if(d.success && d.country_code){
+
+        return {
+
+          country:d.country_code,
+
+          city:d.city || ""
+
+        };
+
+      }
 
 
 
-  return result;
+// ipapi
+
+      if(d.country_code){
+
+        return {
+
+          country:d.country_code,
+
+          city:d.city || ""
+
+        };
+
+      }
+
+
+
+// freeipapi
+
+      if(d.countryCode){
+
+        return {
+
+          country:d.countryCode,
+
+          city:d.cityName || ""
+
+        };
+
+      }
+
+
+
+    }catch(e){}
+
+
+
+  }
+
+
+
+  return null;
 
 }
 
@@ -184,129 +201,108 @@ async function geoLookup(ipList){
 async function operator(proxies){
 
 
-  let ipMap = {};
-
-  let ips = [];
-
-
-
-  // 解析节点IP
-  for(let node of proxies){
-
-
-    let host =
-        node.server;
-
-
-    let ip =
-        await resolveIP(host);
-
-
-
-    if(ip){
-
-      ipMap[node.name]=ip;
-
-
-      if(!ips.includes(ip))
-        ips.push(ip);
-
-    }
-
-
-  }
-
-
-
-
-  // 查询GeoIP
-
-  let geo =
-      await geoLookup(ips);
-
-
-
-
 
   let count={};
 
 
 
-  // 修改名称
-
   for(let node of proxies){
 
 
 
-    let ip =
-        ipMap[node.name];
+    try{
+
+
+      let host =
+          node.server;
 
 
 
-    if(!ip)
-      continue;
+      if(!host)
+        continue;
 
 
 
-    let info =
-        geo[ip];
+      let ip =
+          await resolveIP(host);
 
 
 
-    if(!info)
-      continue;
+      if(!ip)
+        continue;
+
+
+
+      let info =
+          await geo(ip);
+
+
+
+      if(!info)
+        continue;
 
 
 
 
-    let country =
-        countryCN[info.cc]
-        ||
-        info.country
-        ||
-        info.cc
-        ||
-        "未知";
+      let country =
+          countryCN[info.country]
+          ||
+          info.country;
 
 
 
-    let city =
-        info.city
-        ||
-        "未知";
+      let city =
+          info.city
+          ||
+          "";
 
 
 
-    let proto =
-        node.type
-        ||
-        "unknown";
+      let proto =
+          node.type
+          ||
+          "";
 
 
 
-    let original =
-        node.name;
+      let old =
+          node.name
+          ||
+          "";
 
 
 
-    let key =
-        country+"|"+city;
+      let key =
+          country+"|"+city;
 
 
 
-    count[key] =
-        (count[key]||0)+1;
+      count[key]=
+          (count[key]||0)+1;
 
 
 
-    let num =
-        String(count[key])
-            .padStart(2,"0");
+      let num =
+          String(count[key])
+              .padStart(2,"0");
 
 
 
-    node.name =
-        `${country}|${city}|${proto}|${num}|${original}`;
+      node.name =
+          country
+          +"|"
+          +city
+          +"|"
+          +proto
+          +"|"
+          +num
+          +"|"
+          +old;
+
+
+
+    }catch(e){}
+
 
 
   }
