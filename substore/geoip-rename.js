@@ -29,68 +29,110 @@ const countryCN = {
   TR:"土耳其"
 };
 
+const IPV4_RE = /^\d+\.\d+\.\d+\.\d+$/;
 
-// DNS解析
+
+// DNS解析：多 DoH 兜底（兼容国内网络）
 async function resolveIP(host){
 
-  try{
+  // host 本身已是 IP，直接返回，避免白走一遍 DoH
+  if(IPV4_RE.test(host))
+    return host;
 
-    let res = await fetch(
-      `https://dns.google/resolve?name=${host}`
-    );
+  const dohList = [
+    `https://dns.google/resolve?name=${host}`,
+    `https://223.5.5.5/resolve?name=${host}&type=A`,   // 阿里 DNS
+    `https://doh.pub/dns-query?name=${host}&type=A`,   // DNSPod
+    `https://1.1.1.1/dns-query?name=${host}&type=A&ct=application/dns-json` // Cloudflare
+  ];
 
-    let json = await res.json();
+  for(let url of dohList){
 
-    if(json.Answer){
+    try{
 
-      for(let a of json.Answer){
+      let res = await fetch(url);
 
-        if(
-          a.data &&
-          /^\d+\.\d+\.\d+\.\d+$/.test(a.data)
-        ){
-          return a.data;
+      let json = await res.json();
+
+      if(json.Answer){
+
+        for(let a of json.Answer){
+
+          if(
+            a.data &&
+            IPV4_RE.test(a.data)
+          ){
+            return a.data;
+          }
+
         }
 
       }
 
-    }
+    }catch(e){}
 
-  }catch(e){}
+  }
 
   return host;
 }
 
 
 
-// Geo查询
+// Geo查询：多源兜底，优先返回中文
 async function geo(ip){
 
-  try{
+  const sources = [
 
-    let res = await fetch(
-      `https://ipapi.co/${ip}/json/`
-    );
+    { // 国内可用，直接返回中文
+      url: `https://ip.useragentinfo.com/json?ip=${ip}`,
+      parse: (d)=>({
+        cc:"",
+        country:d.country || "",
+        city:d.city || ""
+      })
+    },
 
-    let data = await res.json();
+    { // 免费，英文
+      url: `https://api.ip.sb/geoip/${ip}`,
+      parse: (d)=>({
+        cc:d.country_code || "",
+        country:d.country || "",
+        city:d.city || ""
+      })
+    },
 
+    { // 最后兜底
+      url: `https://ipapi.co/${ip}/json/`,
+      parse: (d)=>({
+        cc:d.country_code || "",
+        country:d.country_name || "",
+        city:d.city || ""
+      })
+    }
 
-    return {
+  ];
 
-      country:data.country_code || "UN",
-      city:data.city || ""
+  for(let s of sources){
 
-    };
+    try{
 
+      let d = await (await fetch(s.url)).json();
 
-  }catch(e){
+      let r = s.parse(d);
 
-    return {
-      country:"UN",
-      city:""
-    };
+      // 只要拿到国家信息就算成功
+      if(r.country || r.cc)
+        return r;
+
+    }catch(e){}
 
   }
+
+  return {
+    cc:"",
+    country:"",
+    city:""
+  };
 
 }
 
@@ -122,17 +164,26 @@ async function operator(proxies){
         await resolveIP(host);
 
 
+      // 解析不出 IP 就跳过，避免把域名传给 Geo 接口导致 UN
+      if(!IPV4_RE.test(ip))
+        continue;
+
+
       let info =
         await geo(ip);
 
 
 
       let cc =
-        info.country;
+        info.cc || (info.country ? "" : "UN");
 
 
       let country =
-        countryCN[cc] || cc;
+        info.country ||
+        countryCN[cc] ||
+        cc ||
+        "UN";
+
 
 
       // 原始名称：在覆盖 node.name 前先保存
@@ -140,7 +191,7 @@ async function operator(proxies){
         node.name || "";
 
 
-      // 协议：Sub-Store 节点对象的 type 字段，如 tuic / vmess / trojan
+      // 协议：Sub-Store 节点对象的 type 字段，如 vless / hysteria2 / tuic
       let proto =
         node.type || "";
 
